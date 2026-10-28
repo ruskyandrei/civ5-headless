@@ -2,6 +2,22 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
+## Unreleased
+
+- **Queues survive a busy state file** ([PR 1](https://github.com/ruskyandrei/civ5-headless/pull/1)): saving
+  `QUEUE.state.json` failed with `PermissionError: [WinError 5] Access is denied` when another process held the file
+  for a moment (`c5h queue status` from another terminal, Defender scanning it), which ended `queue run` and left its
+  games interrupted. The save now retries for up to 0.75 s before it fails. Writing a mod set's generated mods
+  registry (`Civ5ModsDatabase.db`) retries the same way.
+- **Vox Populi DLC modpacks** ([PR 2](https://github.com/ruskyandrei/civ5-headless/pull/2),
+  [docs/running.md](docs/running.md#37-a-vox-populi-dlc-modpack)):
+  - When one DLC package holds two Lua files with the same name, the host now plays the one found last, as the real
+    game does. A modpack ships CP's and VP's copies of files such as `AssignStartingPlots.lua` in one package; the
+    host took CP's, so Communitu_79a failed on the missing `RegionDivision` table.
+  - Stock DLC and mods-folder games resolve every file as before: no stock package has two Lua files with one name.
+  - running.md section 3.7: how to play a modpack (the database the real game built, the modpack's DLL, `--no-mods`).
+  - Needs a host built from this source; the 0.3.0 host still takes the first file.
+
 ## 0.3.0 (2026-10-27)
 
 - **Your own data from a game** ([docs/probes.md](docs/probes.md), a guide to writing probes and extras, with
