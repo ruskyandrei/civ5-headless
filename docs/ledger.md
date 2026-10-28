@@ -386,3 +386,21 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   3.4 min, no warnings. 150 of 150 turns for A/A, frame skew and heap perturbation.
 - **The game's cache folder** is back (rebuilt for 0.3.0), so databases build again without `--db`.
 - **Release:** the user asked for the review, the merges, the changelog and the 0.3.1 release (2026-10-28).
+
+### 2026-10-28: release 0.3.2
+
+- **What it holds:**
+  - Vassals in the run report: the Players table lists each vassal indented under its master, from the new `master`
+    field in `final-state.json`. It falls back to the replay messages and the final wars for older runs.
+  - Queue job seeds as `[map, sync]`.
+  - The host is unchanged since 0.3.1: the kit carries `out/Release/20261028-094452` (`89C95256`).
+- **Vassal checks:**
+  - On 276 finished games of the user's Vox Populi and StackMod batches, the replay-message reading matches the stats
+    project's reference parser, apart from the war-check drops.
+  - Against the 36 games whose probe logged vassalage live, it gives the exact end state in 34.
+  - Loading continents-g0087's final save with the StackMod 0.3.5 DLL: the new field matched a probe reading the
+    loaded save, for all 8 civilizations.
+- **`verify --host-only`** (`runs/verify-host-only-20261028-163322`, the configured Stacking DLL `CB6B0BED`): pass,
+  3.4 min, no warnings. 150 of 150 turns for A/A, frame skew and heap perturbation. Its games write `master` -1
+  for every civilization.
+- **Release:** the user asked for the merge and a patch release (2026-10-28).

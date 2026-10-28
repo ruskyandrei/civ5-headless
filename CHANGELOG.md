@@ -2,7 +2,7 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
-## Unreleased
+## 0.3.2 (2026-10-28)
 
 - **Queue job seeds:** a job's `seeds` takes `[map, sync]` as well as `{"map": M, "sync": S}`, as the queue's own
   `seeds` list does. Anything else stops the queue before a game starts, naming the job; it used to fail that job's
