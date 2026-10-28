@@ -2,7 +2,7 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
-## Unreleased
+## 0.3.1 (2026-10-28)
 
 - **Queues survive a busy state file** ([PR 1](https://github.com/ruskyandrei/civ5-headless/pull/1)): saving
   `QUEUE.state.json` failed with `PermissionError: [WinError 5] Access is denied` when another process held the file
@@ -16,7 +16,7 @@ Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-
     host took CP's, so Communitu_79a failed on the missing `RegionDivision` table.
   - Stock DLC and mods-folder games resolve every file as before: no stock package has two Lua files with one name.
   - running.md section 3.7: how to play a modpack (the database the real game built, the modpack's DLL, `--no-mods`).
-  - Needs a host built from this source; the 0.3.0 host still takes the first file.
+  - In the host: the kit has a new `civ5headless.exe` build. The 0.3.0 host still takes the first file.
 
 ## 0.3.0 (2026-10-27)
 

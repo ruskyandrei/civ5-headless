@@ -366,3 +366,23 @@ The host's own history (milestones M0–M6, parity work against the real game) i
     missing. The game was then started to its main menu (35 s) and quit cleanly, with the user's go-ahead, which
     rebuilt the cache folder; `c5h doctor` finds it again.
 - **Release:** the user asked for the push, the worktree's removal and a new kit and release (2026-10-27).
+
+### 2026-10-28: release 0.3.1
+
+- **What it holds:** two fixes from outside pull requests, reviewed and merged with the user's go-ahead:
+  - [PR 1](https://github.com/ruskyandrei/civ5-headless/pull/1): `winproc.replace` retries `os.replace` on
+    `PermissionError` (5 tries, 0.75 s), used by the queue state save and `modsdb.write`, so a reader or Defender
+    holding `QUEUE.state.json` for a moment no longer ends `queue run`.
+  - [PR 2](https://github.com/ruskyandrei/civ5-headless/pull/2): `HHVfs` gives each DLC package a group; inside one
+    package the file scanned last wins (VP DLC modpacks ship CP's and VP's copies in one package). Between packages,
+    and for base and mods, the order is unchanged. The in-package rule is inferred from the modpack's behaviour in the
+    real game, not probed; no modpack is installed here.
+- **Checked:** no stock package below `Assets\DLC` has two Lua files with one name (13 active packages). Hosts built
+  from `main` before and after PR 2 write identical `vfs-index.log` files and resolve every include the same way
+  (the configured 5 mods, and `--no-mods`); a 2-turn VP game is identical but for thread ids.
+- **Host:** a new build, `out/Release/20261028-094452` (`89C95256`), from the merged `main`, with the VC9 toolchain
+  in `Civ5StackMod\work\toolchain\sdk` (`C5H_TOOLCHAIN`). No compiler warnings.
+- **`verify --host-only`** (`runs/verify-host-only-20261028-121300`, the configured Stacking DLL `CB6B0BED`): pass,
+  3.4 min, no warnings. 150 of 150 turns for A/A, frame skew and heap perturbation.
+- **The game's cache folder** is back (rebuilt for 0.3.0), so databases build again without `--db`.
+- **Release:** the user asked for the review, the merges, the changelog and the 0.3.1 release (2026-10-28).

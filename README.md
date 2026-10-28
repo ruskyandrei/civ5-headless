@@ -5,7 +5,7 @@ from the Civ V SDK (the stock DLL, Community Patch, Vox Populi or your own) and 
 setup options, several games at a time, much faster than the real game. A verification suite measures how closely the
 headless games represent real Civ V autoplay for your DLL and mods.
 
-Status: 0.3.0, which adds your own data from a game (Lua extras) and quieter background runs
+Status: 0.3.1, which fixes queues stopped by a busy state file and Vox Populi DLC modpacks' Lua
 ([CHANGELOG.md](CHANGELOG.md)). It was developed in a Vox Populi fork:
 [docs/plan.md](docs/plan.md) has the plan, and [docs/history](docs/history) shows how the host was built and checked
 against the real game.
