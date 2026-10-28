@@ -2,6 +2,12 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
+## Unreleased
+
+- **Queue job seeds:** a job's `seeds` takes `[map, sync]` as well as `{"map": M, "sync": S}`, as the queue's own
+  `seeds` list does. Anything else stops the queue before a game starts, naming the job; it used to fail that job's
+  game with `TypeError: dict() argument after ** must be a mapping`.
+
 ## 0.3.1 (2026-10-28)
 
 - **Queues survive a busy state file** ([PR 1](https://github.com/ruskyandrei/civ5-headless/pull/1)): saving

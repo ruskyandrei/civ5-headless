@@ -323,6 +323,17 @@ class QueueTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 queue.expand({'jobs': [{'name': 'x'}, {'name': 'x', 'spec': 's'}]}, qpath)
 
+    def test_job_seeds(self):
+        """A job's seeds as {map, sync} or [map, sync]; anything else stops before a game starts."""
+        qpath = Path(tempfile.gettempdir()) / 'queue.json'
+        jobs = queue.expand({'defaults': {'spec': 's.json'}, 'jobs': [{'name': 'a', 'seeds': [5, 6]},
+                                                                     {'name': 'b', 'seeds': {'sync': 7}}]}, qpath)
+        self.assertEqual([j['seeds'] for j in jobs], [{'map': 5, 'sync': 6}, {'sync': 7}])
+        for bad in ([5], 'x', {'map': 5, 'seed': 6}):
+            with self.assertRaises(SystemExit) as caught:
+                queue.expand({'jobs': [{'name': 'a', 'spec': 's.json', 'seeds': bad}]}, qpath)
+            self.assertIn('job a: seeds is', str(caught.exception))
+
     def test_save_retries_a_denied_replace(self):
         """A state save survives a passing sharing violation (Defender scanning the file) and raises a lasting one."""
         with tempfile.TemporaryDirectory() as tmp:
