@@ -1,5 +1,6 @@
 """Run reports (report.py) on fixture run folders built here, the shared HTML helpers, the detail levels (what a run
 folder keeps, the host options that keep the host from writing the rest) and the DLL choice for explicit mod sets."""
+from html import unescape
 from html.parser import HTMLParser
 import io
 import contextlib
@@ -143,6 +144,54 @@ def make_run(folder, turns=20, final=True, replay=True, checkpoints=True, map0=T
     return folder
 
 
+def make_vassal_run(folder, masters=None):
+    """make_run with four more majors (2 France, 3 Egypt, 4 Greece, 5 Siam) and vassalage in the replay messages:
+    France England's vassal (said twice); Greece France's, freed, England's, then freed again on one turn (the messages
+    out of order, one of them twice); Egypt eliminated, then restored as England's vassal; Rome (dead at the end)
+    England's; Siam France's, though at war with Geneva and France is not. masters: a master field in final-state.json."""
+    folder = make_run(folder)
+    final = json.loads((folder / 'final-state.json').read_text(encoding='utf-8'))
+    for owner, name, leader, score in ((2, 'France', 'Napoleon', 150), (3, 'Egypt', 'Ramesses II', 140),
+                                       (4, 'Greece', 'Alexander', 130), (5, 'Siam', 'Ramkhamhaeng', 120)):
+        final['players'].append(dict(owner=owner, team=owner, name=name, leaderName=leader, civilization='CIVILIZATION_' + name.upper(),
+                                     minor=False, alive=True, colors=['#ffffff', '#20%02x60' % (owner * 30)], score=score, cities=2))
+    for p in final['players']:
+        if masters is not None and not p['minor']:
+            p['master'] = masters.get(p['owner'], -1)
+    write(folder, 'final-state.json', final)
+    messages = json.loads((folder / 'replay-messages.json').read_text(encoding='utf-8'))
+    messages += [dict(Turn=5, Type=0, Player=1, Text='Augustus Caesar has become the vassal of Elizabeth!', index=20),
+                 dict(Turn=6, Type=0, Player=2, Text='Napoleon has become the vassal of Elizabeth!', index=30),
+                 dict(Turn=6, Type=0, Player=2, Text='Napoleon has become the vassal of Elizabeth!', index=31),
+                 dict(Turn=7, Type=0, Player=4, Text='Alexander has become the vassal of Napoleon!', index=40),
+                 dict(Turn=8, Type=0, Player=4, Text='Alexander is no longer the vassal of Elizabeth!', index=41),
+                 dict(Turn=9, Type=0, Player=4, Text='Alexander is no longer the vassal of Napoleon!', index=42),
+                 dict(Turn=10, Type=0, Player=4, Text='Alexander is no longer the vassal of Elizabeth!', index=52),
+                 dict(Turn=10, Type=0, Player=4, Text='Alexander has become the vassal of Elizabeth!', index=53),
+                 dict(Turn=10, Type=0, Player=4, Text='Alexander has become the vassal of Elizabeth!', index=51),
+                 dict(Turn=11, Type=0, Player=3, Text='The Egyptian Civilization has been conquered!!!', index=60),
+                 dict(Turn=13, Type=0, Player=0, Text='England has conquered Thebes and restored Egyptian sovereignty. The flame of '
+                      'the Egyptian Empire, once extinguished, burns again. Egyptian Empire is now the vassal of England.', index=70),
+                 dict(Turn=14, Type=0, Player=5, Text='Ramkhamhaeng has become the vassal of Napoleon!', index=80)]
+    write(folder, 'replay-messages.json', messages)
+    cp = folder / 'checkpoints' / 'turn-0020-final.json'
+    data = json.loads(cp.read_text(encoding='utf-8'))
+    data['data']['wars'] = [[5, 22]]
+    write(folder, cp.relative_to(folder).as_posix(), data)
+    return folder
+
+
+def player_rows(text):
+    """[(tr class, player id, its vassal tag's title or None)] of the players table, in order."""
+    table = text.split('<h2 id="players">', 1)[1].split('</table>', 1)[0]
+    out = []
+    for row in table.split('<tr ')[1:]:  # the header row is a bare <tr>
+        tag = re.search(r'<span class="vtag" title="([^"]*)">vassal</span>', row)
+        out.append((re.match(r'class="([^"]*)"', row).group(1), int(re.search(r'var\(--p(\d+)\)', row).group(1)),
+                    tag and unescape(tag.group(1))))
+    return out
+
+
 class ReportTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -253,6 +302,37 @@ class ReportTest(unittest.TestCase):
         gone = [e for e in evs if e['kind'] == 'elimination']
         self.assertEqual([(e['turn'], e['player'], e['text']) for e in gone], [(15, 1, 'The Roman Empire has been conquered!!!')])
         self.assertEqual([e['turn'] for e in evs if e['kind'] == 'capture'], [12, 13])
+
+    def test_vassals_from_the_replay_messages(self):
+        m = report.collect(make_vassal_run(self.dir / 'v'))
+        self.assertEqual(report.vassal_masters(m, report.players(m)), ({2: 0, 3: 0}, 'the replay messages'))
+        text = report.render(m)
+        well_formed(self, text)
+        self.assertEqual(player_rows(text), [('winner', 0, None), ('vassal vmore', 2, "France is England's vassal"),
+                                             ('vassal', 3, "Egypt is England's vassal"), ('', 4, None), ('', 5, None),
+                                             ('dead', 1, None)])
+        self.assertIn('Vassals are listed under their master, as at the end of the game: from the replay messages', text)
+
+    def test_vassals_from_the_final_state(self):
+        m = report.collect(make_vassal_run(self.dir / 'v', masters={2: 0, 4: 2, 1: 0}))
+        self.assertEqual(report.vassal_masters(m, report.players(m)), ({2: 0, 4: 2}, 'final-state.json'))  # Rome is dead
+        text = report.render(m)
+        well_formed(self, text)
+        self.assertEqual(player_rows(text), [('winner', 0, None), ('vassal', 2, "France is England's vassal"),
+                                             ('vassal', 4, "Greece is France's vassal"), ('', 3, None), ('', 5, None),
+                                             ('dead', 1, None)])
+        self.assertIn('<tr class="vassal" style="--d:2">', text)
+        self.assertIn('as at the end of the game: from final-state.json.', text)
+
+    def test_no_vassals(self):
+        m = report.collect(make_run(self.dir / 'n'))
+        self.assertEqual(report.vassal_masters(m, report.players(m)), ({}, ''))
+        text = report.render(m)
+        self.assertEqual(player_rows(text), [('winner', 0, None), ('dead', 1, None)])
+        self.assertNotIn('Vassals are listed', text)
+        rows = [dict(id=i) for i in range(4)]
+        self.assertEqual([(p['id'], d, more) for p, d, more in report._vassal_rows(rows, {1: 9, 2: 3, 3: 2})],
+                         [(0, 0, False), (1, 0, False), (2, 0, False), (3, 1, False)])  # master not shown; a loop
 
     def test_labels_never_overlap(self):
         ys = html.spread([50, 50.5, 51, 49, 120, 121], 11, 8, 190)

@@ -255,7 +255,7 @@ The files follow the real-game benchmark of the Vox Populi fork this came from, 
 | `status.json` | `state`, `startTurn`/`endTurn`/`turns`, `wallSeconds`, `secondsPerTurn`, `process` (CPU seconds, peak working set, peak private bytes), `endReason` (target_turn, victory, killed), `winner`/`victory`, `save` (seed key), `background`, `extras` (each extra's rows, errors and first error) |
 | `host-report.json` | the host's run report: status and error, exe, DLL and databases, options, activated mods, profiles selected, add-in contexts and their errors, unknown UI files, engine stubs the DLL called, Lua errors, timings and memory ([engine contract](engine-contract.md), section 14) |
 | `hh-command.json` | the host command line, the inputs' hashes, the DLL and why, the mods registry, profiles, fingerprint settings, extras (with their SHA-256) and detail level |
-| `final-state.json` | after the last turn: every player (names, colours, alive, score, cities, population, techs, policies, era, wonders, religion) and the final map (plot owners, cities) |
+| `final-state.json` | after the last turn: every player (names, colours, alive, score, cities, population, techs, policies, era, wonders, religion; a major's `master`: the player leading its master team, -1 for none, left out by a DLL without vassalage) and the final map (plot owners, cities) |
 | `report.html` | the run report (below) |
 | host outputs | `newgame-report.json`, `Logs/` (HeadlessDigest.log with the per-turn digests, Lua.log, the DLL's logs), `t000-map.json`, `t000-digest.json`; with `--detail full` also `dump-t000/`, `dump-tN/` and `db/` |
 
@@ -288,6 +288,7 @@ the theme button and the timeline filter):
   was chosen, mods, host commit, detail level) and the result (winner and victory, or the turn the game stopped at;
   autoplay seconds and seconds per turn, CPU, peak memory);
 - the players: civilization, leader, team, alive, score, cities, population, techs, policies, era, wonders, religion;
+  vassals indented under their master (`final-state.json`'s `master`, else the replay messages and the final wars);
 - per-player charts over the turns (score, cities, population, techs, policies, culture, science, gold, military,
   land, happiness, tourism, faith, wonders) from the replay data, else the checkpoints, else the fingerprint metrics,
   each line labelled at its end; the host's seconds per turn;
