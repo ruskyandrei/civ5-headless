@@ -230,7 +230,7 @@ class LuaTest(unittest.TestCase):
                        EXPORT=session.EXPORT % tuner.lua_string('x/y.db'), DISMISS=mods.DISMISS_LEGAL,
                        ACTIVATE=mods.ACTIVATE, REPLAY_OWNERS=session.REPLAY_OWNERS, REPLAY_PLAYER=session.REPLAY_PLAYER % 3,
                        LOAD=session.LOAD % tuner.lua_string('saves/Turn_0006 BC-3760.Civ5Save'),
-                       SAVE=session.SAVE % tuner.lua_string('After 6'), DIGEST_ON=session.DIGEST_ON)
+                       SAVE=session.SAVE % tuner.lua_string('After 6'), DIGEST_ON=session.DIGEST_ON, FINAL=run.FINAL)
         for name, source in sources.items():
             with self.subTest(name=name):
                 self.assertIsNone(compile_(source))

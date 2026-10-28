@@ -13,6 +13,7 @@ button; it reads the same without), in light and dark themes:
   why it was chosen), the mods, the host (exe hash, commit) and the detail level;
 - result: the winner and victory, or the turn the game stopped at; autoplay time, seconds per turn, CPU, peak memory;
 - players: civilization, leader, team, alive, score, cities, population, techs, policies, era, wonders, religion;
+  vassals under their master (final-state.json's master, else the replay messages and the final wars);
 - per-player charts over the turns (replay data, else the checkpoints, else the fingerprint metrics), each line labelled
   at its end; the host's seconds per turn; the event timeline (replay messages, plus era changes and eliminations from
   the checkpoints), filterable by kind and player; the map at turn 0 and the final territories with the cities;
@@ -78,6 +79,14 @@ TEXT_KINDS = [('war', re.compile(r'declares? war on', re.I)), ('peace', re.compi
               ('raze', re.compile(r'set ablaze|was destroyed', re.I)), ('victory', re.compile(r'has won a', re.I)),
               ('tech', re.compile(r'first to (?:discover|complete)|proven that the world is round', re.I)),
               ('golden', re.compile(r'golden age', re.I)), ('person', re.compile(r'has created', re.I))]
+# Vassalage in the replay messages (English, like TEXT_KINDS): "<leader> has become the vassal of <leader>!" and
+# "<leader> is no longer the vassal of <leader>!"; a liberated civilization brought back as its liberator's vassal (the
+# message's player): "<civ> has conquered <city> and restored <adjective> sovereignty. ... is now the vassal of <civ>.";
+# and an elimination, "The <adjective> Civilization has been conquered!!!" (the message's player is the one eliminated).
+VASSAL_BECAME = re.compile(r'^(.+) has become the vassal of (.+)!$')
+VASSAL_FREED = re.compile(r'^(.+) is no longer the vassal of (.+)!$')
+VASSAL_RESTORED = re.compile(r'restored (.+?) sovereignty\..* is now the vassal of ')
+ELIMINATED = re.compile(r'^The (.+) Civilization has been (?:conquered|defeated)')
 KINDS = {'victory': 'Victory', 'elimination': 'Eliminations', 'war': 'Wars', 'peace': 'Peace', 'pact': 'Pacts',
          'capture': 'Cities captured', 'raze': 'Cities razed', 'city': 'Cities founded', 'wonder': 'Wonders',
          'religion': 'Religions', 'pantheon': 'Pantheons', 'era': 'Eras', 'golden': 'Golden ages', 'tech': 'First to a tech',
@@ -494,6 +503,59 @@ def events(m, ps):
     return out
 
 
+def vassal_masters(m, ps):
+    """({vassal: master} of the major civilizations at the end, both alive; where it came from: 'final-state.json',
+    'the replay messages' or '' when nothing says). final-state.json's master (each major's master team's leader, -1 for
+    none; newer runs), else the replay messages in order, each once (a message can be there twice): a vassal's last
+    became, restored or no-longer message counts, and an elimination ends the vassalage of the civilization eliminated
+    and of its vassals. A restoration names the civilization by its adjective, which the message of its elimination
+    (always earlier: only a civilization eliminated can be restored) gave too. The final checkpoint's wars then drop
+    the vassalages the game ended without a message (most of them)."""
+    ids = {p['id'] for p in majors(ps)}
+    alive = {pid for pid in ids if ps[pid].get('alive') is not False}
+    found = {pid: ps[pid]['master'] for pid in ids if type(ps[pid].get('master')) is int}
+    source = 'final-state.json' if found else ''
+    if not found:
+        leader = {ps[pid].get('leaderName'): pid for pid in ids if ps[pid].get('leaderName')}
+        adjective, seen = {}, set()
+        messages = [x for x in m['messages'] if isinstance(x, dict) and isinstance(x.get('Turn'), int)]
+        for msg in sorted(messages, key=lambda x: (x['Turn'], x['index'] if isinstance(x.get('index'), int) else 0)):
+            text, who = clean(msg.get('Text')), msg.get('Player')
+            if (msg['Turn'], text) in seen:
+                continue
+            seen.add((msg['Turn'], text))
+            gone = ELIMINATED.match(text)
+            if gone and who in ids:
+                adjective[gone.group(1)] = who
+                found.update({v: None for v, k in found.items() if v == who or k == who})
+                continue
+            pair = VASSAL_BECAME.match(text) or VASSAL_FREED.match(text)
+            if pair and pair.group(1) in leader and pair.group(2) in leader:
+                vassal, master = leader[pair.group(1)], leader[pair.group(2)]
+                if pair.re is VASSAL_BECAME:
+                    found[vassal] = master
+                elif found.get(vassal) == master:
+                    found[vassal] = None
+                source = 'the replay messages'
+                continue
+            restored = VASSAL_RESTORED.search(text)
+            if restored and adjective.get(restored.group(1)) is not None and who in ids:
+                found[adjective[restored.group(1)]] = who
+                source = 'the replay messages'
+        # The game ends some vassalages without a message. A vassal is at war with whoever its master is at war with,
+        # so one whose wars in the final checkpoint differ from its master's is not a vassal any more.
+        wars = (m.get('finalCheckpoint') or {}).get('wars')
+        if isinstance(wars, list):
+            enemies = {}
+            for pair in wars:
+                if isinstance(pair, list) and len(pair) == 2:
+                    enemies.setdefault(pair[0], set()).add(pair[1])
+                    enemies.setdefault(pair[1], set()).add(pair[0])
+            found = {v: k for v, k in found.items()
+                     if k is None or enemies.get(v, set()) - {k} == enemies.get(k, set()) - {v}}
+    return {v: k for v, k in found.items() if k is not None and k != v and v in alive and k in alive}, source
+
+
 # ---- page parts ----
 
 PAGE_CSS = '''
@@ -510,6 +572,12 @@ a{color:var(--info)}
 .maps svg{display:block;width:100%;height:auto}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px;border:1px solid var(--line)}
 tr.winner td{font-weight:650}tr.dead td{color:var(--muted)}
+tr.vassal td:first-child{position:relative;padding-left:calc(9px + 25px * var(--d,1))}
+tr.vassal td:first-child::before,tr.vmore td:first-child::after{content:'';position:absolute;left:calc(25px * var(--d,1) - 8px);
+border-left:1.5px solid var(--muted);opacity:.5}
+tr.vassal td:first-child::before{top:-1px;height:17px;width:10px;border-bottom:1.5px solid var(--muted);border-bottom-left-radius:5px}
+tr.vmore td:first-child::after{top:16px;bottom:-1px}
+.vtag{font-size:11px;font-weight:400;color:var(--muted)}
 .pill{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;font-weight:600;color:#fff;background:var(--warn)}
 .tlbox{max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:6px}
 .tlbox table{border:none;border-radius:0}.tlbox td:nth-child(-n+3){white-space:nowrap}
@@ -679,18 +747,51 @@ def _result(m, ps):
     return out
 
 
+def _vassal_rows(rows, masters):
+    """[(player, depth, more)]: rows in their order, each master followed by its vassals (depth one more; more: a
+    sibling vassal follows), the vassals in the same order. A vassal whose master is not in rows stays at the top."""
+    shown = {p['id'] for p in rows}
+    under = {}
+    for p in rows:
+        if masters.get(p['id']) in shown:
+            under.setdefault(masters[p['id']], []).append(p)
+    out, placed = [], set()
+
+    def place(p, depth, more):
+        placed.add(p['id'])
+        out.append((p, depth, more))
+        vassals = [q for q in under.get(p['id'], []) if q['id'] not in placed]
+        for i, q in enumerate(vassals):
+            place(q, depth + 1, i < len(vassals) - 1)
+
+    for p in rows:
+        if p['id'] not in placed and masters.get(p['id']) not in shown:
+            place(p, 0, False)
+    for p in rows:  # vassals of each other (not seen in a game): at the top
+        if p['id'] not in placed:
+            place(p, 0, False)
+    return out
+
+
 def _players_table(m, ps):
     rows = sorted(majors(ps), key=lambda p: (not p.get('winner'), -(p.get('score') or 0), p['id']))
     if not rows:
         return '<p class="note">No players: the run has no setup, checkpoints or final state.</p>'
+    masters, source = vassal_masters(m, ps)
     head = ('<table><thead><tr><th>civilization</th><th>leader</th><th class="num">team</th><th>alive</th>'
             '<th class="num">score</th><th class="num">cities</th><th class="num">pop.</th><th class="num">techs</th>'
             '<th class="num">policies</th><th>era</th><th class="num">wonders</th><th>religion</th></tr></thead><tbody>')
     body = []
-    for p in rows:
+    for p, depth, more in _vassal_rows(rows, masters):
         cls = 'winner' if p.get('winner') else ('dead' if p.get('alive') is False else '')
+        tag = ''
+        if depth:
+            cls = (cls + ' vassal' + (' vmore' if more else '')).strip()
+            says = f"{p['name']} is {ps[masters[p['id']]]['name']}'s vassal"
+            tag = f' <span class="vtag" title="{h(says)}">vassal</span>'
         era = p.get('eraType') or p.get('era')
-        body.append(f'<tr class="{cls}"><td><span class="dot" style="background:var(--p{p["id"]})"></span>{h(p["name"])}'
+        body.append(f'<tr class="{cls}"' + (f' style="--d:{depth}"' if depth > 1 else '') + '><td>'
+                    f'<span class="dot" style="background:var(--p{p["id"]})"></span>{h(p["name"])}{tag}'
                     + (' <span class="pill">winner</span>' if p.get('winner') else '')
                     + (' <span class="muted">(human slot)</span>' if p.get('human') else '') + '</td>'
                     f'<td>{h(p.get("leaderName"))}</td><td class="num">{h(p.get("team"))}</td>'
@@ -701,9 +802,15 @@ def _players_table(m, ps):
                     f'<td class="num">{fmt(p.get("wonders"))}</td><td>{h(religion(p.get("religion")))}</td></tr>')
     minors = sorted((p for p in ps.values() if p['minor']), key=lambda p: p['name'])
     tail = ''
+    if masters:
+        tail += ('<p class="note">Vassals are listed under their master, as at the end of the game: '
+                 + ('from final-state.json.' if source == 'final-state.json' else
+                    'from the replay messages (became and no longer a vassal, restored as one, eliminated) and the '
+                    "wars at the end (a vassal has its master's wars). The game does not announce every end of a "
+                    'vassalage, so now and then a former vassal still shows here.') + '</p>')
     if minors:
         alive = sum(1 for p in minors if p.get('alive') is not False)
-        tail = (f'<p class="note">City-states ({alive} of {len(minors)} alive): '
+        tail += (f'<p class="note">City-states ({alive} of {len(minors)} alive): '
                 + ', '.join(f'<span class="dot" style="background:var(--p{p["id"]})"></span>{h(p["name"])}'
                             + (' (gone)' if p.get('alive') is False else '') for p in minors) + '</p>')
     return '<div class="scroll">' + head + ''.join(body) + '</tbody></table></div>' + tail

@@ -160,8 +160,9 @@ STRENGTH = r'''-- Strength metrics for A/B comparison (abcompare.py); nil when a
    e.votes=league and v(league.CalculateStartingVotesForMember,league,owner) or nil'''
 
 # After autoplay: victory, replay messages (vpbench: Type ~= 2, Plots dropped) and per-major replay data; then the
-# players (names, colours, final standing) and the final map (plot owners, cities) for the run report, through plain
-# getters (pcall-guarded where some DLLs lack them). It runs after the last turn's digest and checkpoint.
+# players (names, colours, final standing, a major's master: its master team's leader, -1 for none; none without the
+# vassal getters) and the final map (plot owners, cities) for the run report, through plain getters (pcall-guarded
+# where some DLLs lack them). It runs after the last turn's digest and checkpoint.
 FINAL = r'''
 local out={}
 local vic=Game.GetVictory();local info=vic and vic>=0 and GameInfo.Victories[vic]
@@ -190,6 +191,7 @@ for owner=0,63 do local p=Players[owner]
    population=v(p.GetTotalPopulation,p),techs=v(function() return Teams[p:GetTeam()]:GetTeamTechs():GetNumTechsKnown() end),
    policies=v(p.GetNumPolicies,p),era=v(p.GetCurrentEra,p),wonders=v(p.GetNumWorldWonders,p)}
   if e.era then local r=GameInfo.Eras[e.era];e.eraType=r and r.Type end
+  if not e.minor then e.master=v(function() local t=Teams[e.team];if t.IsVassalOfSomeone then return t:IsVassalOfSomeone() and Teams[t:GetMaster()]:GetLeaderID() or -1 end end) end
   if e.wonders==nil then local n=0;for c in p:Cities() do for _,id in ipairs(wonders) do if c:IsHasBuilding(id) then n=n+1 end end end;e.wonders=n end
   local rel=v(p.GetReligionCreatedByPlayer,p);if rel and rel>0 then local r=GameInfo.Religions[rel];local n=v(Game.GetReligionName,rel) or (r and r.Description);e.religion=n and Locale and v(Locale.ConvertTextKey,n) or n end
   players[#players+1]=e
