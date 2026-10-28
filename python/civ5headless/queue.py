@@ -25,7 +25,7 @@ Job keys: spec or load (a .Civ5Save to continue; its mod set unless mods, noMods
 the turn to play to), turns, dll, db (a built database; otherwise built once per (mods input, DLL) and cached),
 modsDir, modsDb, mods (the mod set as ["ID[:VER]", ...]: a generated registry instead of modsDb), noMods, locDb,
 exe, gameDir, profiles, noProfiles, skipAddins, noAddins, fingerprint (true, or {"every": K, "turns": [...],
-"split": N}), seeds {map, sync}, diagnostics, improvedMask, abRole, checkpointEvery, maxSeconds, stallSeconds,
+"split": N}), seeds ({map, sync} or [map, sync]), diagnostics, improvedMask, abRole, checkpointEvery, maxSeconds, stallSeconds,
 maxMemoryMB, detail (summary, standard (default) or full; the old prune: false is full), report (default true),
 hostArgs, luaProbes, checkpointExtras, finalExtras (Lua files, docs/probes.md), heapPerturb, frameSkew, lowPriority
 (default true), cpuLimit (percent of one core), efficiencyMode, autosave (none (default), game or N), saveAt [turns],
@@ -98,6 +98,11 @@ def expand(queue, qpath, cfg=None):
             j['load'], j['spec'] = j['spec'], None
         if bool(j.get('spec')) == bool(j.get('load')):
             raise SystemExit(f"job {j['name']}: spec or load is required (one of them)")
+        seeds = j.get('seeds')
+        if isinstance(seeds, list) and len(seeds) == 2:
+            j['seeds'] = dict(map=seeds[0], sync=seeds[1])  # [map, sync], as in the queue's seeds list
+        elif seeds is not None and not (isinstance(seeds, dict) and set(seeds) <= {'map', 'sync'}):
+            raise SystemExit(f"job {j['name']}: seeds is {{\"map\": M, \"sync\": S}} or [M, S], not {seeds!r}")
         if j.get('load') and j.get('mods') is None and not j.get('noMods') and not j.get('modsDb'):
             try:
                 header = savegame.read_header(j['load'])
