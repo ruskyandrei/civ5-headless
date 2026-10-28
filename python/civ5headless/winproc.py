@@ -5,6 +5,7 @@
 - Process priority: below normal, or efficiency mode (EcoQoS and idle priority, as Task Manager's).
 - Process statistics: CPU seconds, peak working set, peak/current private bytes, peak virtual size.
 - CPU topology: physical cores with their efficiency class (P-cores first on hybrid CPUs such as the 13900K).
+- File replace: os.replace retried through a passing sharing violation (a scanner or reader holding the file).
 """
 import ctypes
 import os
@@ -237,6 +238,18 @@ def worker_affinities(workers, mode='p-first'):
     cs = cores()
     masks = [mask for _, mask in cs]
     return [masks[i] if i < len(masks) else None for i in range(workers)]
+
+
+def replace(src, dst, tries=5, delay=0.05):
+    """os.replace, retried on PermissionError: a scanner (Defender) or a reader holding src or dst open without delete
+    sharing denies it for a moment (WinError 5). Backs off 0.05, 0.1, 0.2, 0.4 s (0.75 s in all), then raises."""
+    for attempt in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if attempt == tries - 1:
+                raise
+            time.sleep(delay * 2 ** attempt)
 
 
 def pid_alive(pid):

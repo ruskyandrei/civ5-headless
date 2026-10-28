@@ -35,7 +35,7 @@ import sqlite3
 import sys
 import xml.etree.ElementTree as ET
 
-from . import config, dbbuild
+from . import config, dbbuild, winproc
 
 FORMAT = 1           # bump when the rows written change, so cached registries are rebuilt
 FILE_NAME = 'Civ5ModsDatabase.db'
@@ -255,7 +255,7 @@ def write(ordered, out, path_as):
         con.commit()
     finally:
         con.close()
-    os.replace(tmp, out)
+    winproc.replace(tmp, out)
     return out
 
 

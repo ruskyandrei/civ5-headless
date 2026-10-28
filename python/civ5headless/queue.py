@@ -137,7 +137,7 @@ class Queue:
     def save(self):
         tmp = self.state_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(self.state, indent=1) + '\n', encoding='utf-8')
-        os.replace(tmp, self.state_path)
+        winproc.replace(tmp, self.state_path)  # a status reader or Defender may hold the state file a moment
 
     def log(self, message):
         line = f'{utc()} {message}'

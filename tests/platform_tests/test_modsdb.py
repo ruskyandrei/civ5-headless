@@ -8,8 +8,9 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
-from civ5headless import config, modsdb
+from civ5headless import config, modsdb, winproc
 
 BASE_ID = '0b5e0000-1111-4222-8333-944444444444'
 ADDON_ID = 'ADD00000-1111-4222-8333-944444444444'
@@ -145,6 +146,21 @@ class BuildTest(unittest.TestCase):
         modsdb.build(self.mods, [BASE_ID], self.out)
         stored = [r[0] for r in rows(self.out, 'SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid')]
         self.assertEqual([s for s in stored if 'sqlite_sequence' not in s], modsdb.SCHEMA)
+
+    def test_write_retries_a_denied_replace(self):
+        """The registry lands though a scanner or a running game holds the file for a moment (WinError 5)."""
+        real, calls = os.replace, []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) == 1:
+                raise PermissionError(5, 'Access is denied')
+            real(src, dst)
+        with mock.patch.object(winproc.os, 'replace', flaky), mock.patch.object(winproc.time, 'sleep'):
+            modsdb.build(self.mods, [BASE_ID], self.out)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(rows(self.out, 'SELECT ModID FROM Mods'), [(BASE_ID,)])
+        self.assertEqual(list(self.out.parent.glob('*.tmp')), [])
 
     def test_path_as_and_highest_version(self):
         write_mod(self.mods, 'Base Mod (v 2)', BASE.replace('version="3"', 'version="2"'))

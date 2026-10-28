@@ -323,6 +323,32 @@ class QueueTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 queue.expand({'jobs': [{'name': 'x'}, {'name': 'x', 'spec': 's'}]}, qpath)
 
+    def test_save_retries_a_denied_replace(self):
+        """A state save survives a passing sharing violation (Defender scanning the file) and raises a lasting one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            qpath = Path(tmp) / 'queue.json'
+            qpath.write_text(json.dumps({'jobs': [{'name': 'x', 'spec': 's.json'}]}), encoding='utf-8')
+            q = queue.Queue(qpath, config.Config(runs=Path(tmp) / 'runs'))
+            q.state['jobs']['x'] = {'status': 'running'}
+            real, calls = os.replace, []
+
+            def flaky(src, dst):
+                calls.append(dst)
+                if len(calls) <= 2:
+                    raise PermissionError(5, 'Access is denied')
+                real(src, dst)
+            with mock.patch.object(winproc.os, 'replace', flaky), mock.patch.object(winproc.time, 'sleep') as sleep:
+                q.save()
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.05, 0.1])
+            self.assertEqual(json.loads(q.state_path.read_text(encoding='utf-8'))['jobs'], {'x': {'status': 'running'}})
+            self.assertFalse(q.state_path.with_suffix('.tmp').exists())
+            denied = mock.Mock(side_effect=PermissionError(5, 'Access is denied'))
+            with mock.patch.object(winproc.os, 'replace', denied), mock.patch.object(winproc.time, 'sleep'):
+                with self.assertRaises(PermissionError):
+                    q.save()
+            self.assertEqual(denied.call_count, 5)
+
     def test_mod_sets_and_host_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
