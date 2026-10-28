@@ -10,6 +10,10 @@
 // A name is resolved by its file name (case-insensitive, ".lua" optional); the entry with the
 // highest (tier, rank) wins. Measured in the real game (probe hh-probe-include-20261025a):
 // VP's AssignStartingPlots beats CP's, CP's MapmakerUtilities beats DLC and base.
+// Inside one DLC package the file scanned last wins (its <Directory> list in order, each folder's files
+// before its subfolders, names sorted): a Vox Populi DLC modpack ships CP's and VP's copies of a file in
+// Mods\(1) Community Patch and Mods\(2) Vox Populi, and the real game plays VP's (Communitu_79a needs VP's
+// AssignStartingPlots). No stock package has two Lua files with one name.
 #pragma once
 #include "HHCommon.h"
 
@@ -19,7 +23,8 @@ struct HHVfsEntry
 	std::string source;  // "base", "dlc:<folder>/<package>", "mod:<name>"
 	int tier;            // 0 base, 1 DLC, 2 mod
 	int rank;            // DLC priority or mod activation index
-	int seq;             // insertion order inside the source (ties: first wins)
+	int group;           // which source scan added it (packages of one priority: first scanned wins)
+	int seq;             // insertion order (ties inside a group: first wins, inside a DLC package last)
 };
 
 struct HHModEntryPoint
@@ -64,6 +69,7 @@ public:
 
 private:
 	void Add(const std::string& strPath, const std::string& strSource, int iTier, int iRank);
+	void NextGroup() { ++m_iGroup; }
 	void ScanTree(const std::wstring& wstrDir, const std::string& strSource, int iTier, int iRank, bool bSkipDlc, int iDepth);
 	void ScanDlc(const std::string& strGameDir);
 	bool ReadMods(const std::string& strModsDbCopy, const std::string& strModsDir);
@@ -75,6 +81,7 @@ private:
 	std::string m_strModsDir;
 	std::set<std::string> m_logged;
 	int m_iSeq;
+	int m_iGroup;
 };
 
 HHVfs& HHGetVfs();

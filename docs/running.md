@@ -232,6 +232,27 @@ active ([saves.md](saves.md) section 6).
 `status.json` lists the saves (`saves`, `finalSave`), and the report shows them. Queue jobs take a save as `spec`
 or `load`, and `autosave`, `saveAt` and `saveFinal` (section 7).
 
+### 3.7 A Vox Populi DLC modpack
+
+A modpack (`Assets\DLC\VP_MODPACK...`) is not a set of mods: the game builds the whole modded database into its
+cache from the modpack's `Override\*.xml` files and plays it as DLC, with no mods active. The host's own database
+build cannot repeat that (it would apply the DLC layer again on top of a core database that already holds the mods),
+so play on the database the real game built:
+
+1. Start the real game once with the modpack installed and no mods active, to its main menu.
+2. Copy `cache\Civ5DebugDatabase.db` and `cache\Localization-Merged.db` somewhere they stay put.
+3. Point the host at them and at the modpack's DLL, and play with `--no-mods` (queue: `"noMods": true`):
+
+```toml
+dll = "C:/Program Files (x86)/Steam/steamapps/common/Sid Meier's Civilization V/Assets/DLC/VP_MODPACK/Mods/(1) Community Patch/CvGameCore_Expansion2.dll"
+db = "pinned/vp-modpack/Civ5DebugDatabase.db"
+loc_db = "pinned/vp-modpack/Localization-Merged.db"
+```
+
+Copy them again after updating the modpack. The modpack's Lua comes from its package folders; inside one package the
+file found last wins, as in the game (VP's copy over CP's, the package's `UI` folder over its `Mods`). Name map
+scripts by their path, e.g. `Assets/Maps/Communitu_79a.lua`, when a copy in your `Maps` folder has the same name.
+
 ## 4. Mod UI: add-ins and profiles
 
 The host has no user interface. Two things stand in for the parts of mod UI code that change the game:

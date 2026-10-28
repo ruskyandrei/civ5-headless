@@ -63,7 +63,8 @@ namespace
 		{
 			if(a.tier != b.tier) return a.tier > b.tier;
 			if(a.rank != b.rank) return a.rank > b.rank;
-			return a.seq < b.seq;
+			if(a.group != b.group) return a.group < b.group;
+			return a.tier == 1 ? a.seq > b.seq : a.seq < b.seq;
 		}
 	};
 }
@@ -74,7 +75,7 @@ HHVfs& HHGetVfs()
 	return s_vfs;
 }
 
-HHVfs::HHVfs() : m_iSeq(0) {}
+HHVfs::HHVfs() : m_iSeq(0), m_iGroup(0) {}
 
 std::string HHVfs::Key(const std::string& strName)
 {
@@ -95,6 +96,7 @@ void HHVfs::Add(const std::string& strPath, const std::string& strSource, int iT
 	e.source = strSource;
 	e.tier = iTier;
 	e.rank = iRank;
+	e.group = m_iGroup;
 	e.seq = m_iSeq++;
 	m_index[Key(strPath)].push_back(e);
 }
@@ -179,6 +181,7 @@ void HHVfs::ScanDlc(const std::string& strGameDir)
 			std::vector<std::string> mapDirs = TagValues(text, "MapDirectory");
 			dirs.insert(dirs.end(), mapDirs.begin(), mapDirs.end());
 			const size_t before = m_iSeq;
+			NextGroup();
 			for(size_t k = 0; k < dirs.size(); ++k)
 			{
 				const std::wstring dir = folder + L"\\" + HHWiden(BackSlashes(dirs[k]));
