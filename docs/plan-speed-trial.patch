@@ -1,0 +1,337 @@
+diff --git a/host/HHCommon.h b/host/HHCommon.h
+index 0cef193..9fa08d4 100644
+--- a/host/HHCommon.h
++++ b/host/HHCommon.h
+@@ -74,7 +74,8 @@ extern "C" {
+ void HHStubHit(const char* szName);
+ void HHImplHit(const char* szName);
+ #define HH_STUB_CALL(name) HHStubHit(name)
+-#define HH_IMPL_CALL(name) HHImplHit(name)
++long* HHImplCounter(const char* szName);
++#define HH_IMPL_CALL(name) do { static long* s_pHHCount = NULL; if(s_pHHCount) ++*s_pHHCount; else s_pHHCount = HHImplCounter(name); } while(0)
+ template<class T> T HHStubDefault() { return T(); }
+ 
+ // Host log (Logs/Headless.log and stdout).
+diff --git a/host/driver/HHMain.cpp b/host/driver/HHMain.cpp
+index b2379c8..e2cb280 100644
+--- a/host/driver/HHMain.cpp
++++ b/host/driver/HHMain.cpp
+@@ -343,6 +343,7 @@ namespace
+ 			else if(a == "--no-profiles") o.noProfiles = true;
+ 			else if(a == "--no-addins") o.noAddins = true;
+ 			else if(a == "--no-dumps") o.noDumps = true;
++			else if(a == "--sba") o.sba = true;
+ 			else if(a == "--save-final") o.saveFinal = true;
+ 			else if(a == "--no-save-final") o.saveFinal = false;
+ 			else if(!bHasValue) { fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
+@@ -374,6 +375,9 @@ namespace
+ 			else if(a == "--mods-dir") { o.modsDir = StripSlash(v); ++i; }
+ 			else if(a == "--mods-db") { o.modsDbPath = v; ++i; }
+ 			else if(a == "--player-option") { o.playerOptions.push_back(v); ++i; }
++			else if(a == "--fork-games") { o.forkGames = atoi(v.c_str()); ++i; }
++			else if(a == "--reseed-map") { o.reseedMap = _strtoi64(v.c_str(), NULL, 10); ++i; }
++			else if(a == "--reseed-sync") { o.reseedSync = _strtoi64(v.c_str(), NULL, 10); ++i; }
+ 			else if(a == "--exe-seed") { o.exeSeed = _strtoi64(v.c_str(), NULL, 10); ++i; }
+ 			else if(a == "--dump-turns")
+ 			{
+@@ -1361,6 +1365,96 @@ namespace
+ 		HHLog("Lua self-test: %s", s.selfTest.bPassed ? "passed" : "FAILED");
+ 		HH_TIMING("lua");
+ 
++		// Trial: everything above once, the game in a clone of this process (Windows fork). The clone needs the handles
++		// the boot opened, so they are all made inheritable first. One clone at a time: they share file positions.
++		if(o.forkGames > 0)
++		{
++			for(UINT_PTR h = 4; h < 0x8000; h += 4)
++				SetHandleInformation((HANDLE)h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
++			// A clone only gets private memory and images: read-only mapped views (the NLS tables, the base server data)
++			// would be missing from it. So they become private copies at the same addresses first.
++			{
++				struct Piece { BYTE* addr; SIZE_T size; std::vector<BYTE> data; };
++				std::map<BYTE*, std::vector<Piece> > views;
++				std::set<BYTE*> skip;
++				SYSTEM_INFO si;
++				GetSystemInfo(&si);
++				MEMORY_BASIC_INFORMATION m;
++				for(BYTE* p = (BYTE*)si.lpMinimumApplicationAddress; p < (BYTE*)si.lpMaximumApplicationAddress && VirtualQuery(p, &m, sizeof(m)); p = (BYTE*)m.BaseAddress + m.RegionSize)
++				{
++					if(m.Type != MEM_MAPPED || m.State != MEM_COMMIT)
++						continue;
++					if(m.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))
++						skip.insert((BYTE*)m.AllocationBase);
++					else if(!(m.Protect & PAGE_NOACCESS))
++					{
++						std::vector<Piece>& v = views[(BYTE*)m.AllocationBase];
++						v.resize(v.size() + 1);
++						v.back().addr = (BYTE*)m.BaseAddress;
++						v.back().size = m.RegionSize;
++						v.back().data.assign((BYTE*)m.BaseAddress, (BYTE*)m.BaseAddress + m.RegionSize);
++					}
++				}
++				int nViews = 0, nFailed = 0;
++				SIZE_T nBytes = 0;
++				for(std::map<BYTE*, std::vector<Piece> >::iterator it = views.begin(); it != views.end(); ++it)
++				{
++					if(skip.count(it->first))
++						continue;
++					const Piece& last = it->second.back();
++					const SIZE_T span = last.addr + last.size - it->first;
++					if(!UnmapViewOfFile(it->first) || !VirtualAlloc(it->first, span, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE))
++					{
++						++nFailed;
++						continue;
++					}
++					for(size_t k = 0; k < it->second.size(); ++k)
++						memcpy(it->second[k].addr, &it->second[k].data[0], it->second[k].size);
++					++nViews;
++					nBytes += span;
++				}
++				HHLog("clone: %d read-only views made private (%u KB), %d failed, %d writable left", nViews, (unsigned)(nBytes / 1024), nFailed, (int)skip.size());
++			}
++			struct CloneInfo { ULONG Length; HANDLE hProcess, hThread, hPid, hTid; BYTE image[64]; };
++			typedef LONG (NTAPI *PFNClone)(ULONG, void*, void*, HANDLE, CloneInfo*);
++			PFNClone pfnClone = (PFNClone)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlCloneUserProcess");
++			DWORD dwLast = 1;
++			const double tAll = HHSeconds();
++			bool bChild = false;
++			for(int k = 0; k < o.forkGames && !bChild; ++k)
++			{
++				const double tFork = HHSeconds();
++				CloneInfo info;
++				memset(&info, 0, sizeof(info));
++				info.Length = sizeof(info);
++				const LONG st = pfnClone(0x00000002, NULL, NULL, NULL, &info);
++				if(st == 0x129)
++				{
++					bChild = true;
++					HHLog("clone %d: pid %lu running", k, GetCurrentProcessId());
++				}
++				else
++				{
++					const double tMade = HHSeconds();
++					WaitForSingleObject(info.hProcess, INFINITE);
++					GetExitCodeProcess(info.hProcess, &dwLast);
++					FILETIME c, e, kt, ut;
++					double dCpu = 0.0;
++					if(GetProcessTimes(info.hProcess, &c, &e, &kt, &ut))
++						dCpu = ((double)(((unsigned __int64)kt.dwHighDateTime << 32) | kt.dwLowDateTime) + (double)(((unsigned __int64)ut.dwHighDateTime << 32) | ut.dwLowDateTime)) / 1e7;
++					HHLog("clone %d: status %08lx, made in %.4f s, exit %lu, game %.3f s, child CPU %.3f s", k, (unsigned long)st, tMade - tFork, dwLast, HHSeconds() - tMade, dCpu);
++					CloseHandle(info.hProcess);
++					CloseHandle(info.hThread);
++				}
++			}
++			if(!bChild)
++			{
++				HHLog("clones: %d games in %.3f s after a boot of %.3f s", o.forkGames, HHSeconds() - tAll, tAll - t0);
++				HHLogClose();
++				TerminateProcess(GetCurrentProcess(), dwLast);
++			}
++		}
++
+ 		// newgame (M2): pregame, start, T000 outputs.
+ 		HHNewGameResult ng;
+ 		HHNewGameInterfaces nif;
+diff --git a/host/engine/HHExports.cpp b/host/engine/HHExports.cpp
+index ad72097..7180943 100644
+--- a/host/engine/HHExports.cpp
++++ b/host/engine/HHExports.cpp
+@@ -73,7 +73,7 @@ namespace
+ 
+ 	inline void ExportHit(ExportId eId)
+ 	{
+-		if(InterlockedIncrement(&s_alExportCounts[eId]) == 1)
++		if(++s_alExportCounts[eId] == 1)
+ 		{
+ 			s_aszExportPhase[eId] = HHGetPhase();
+ 			HHLog("export first call: %s (phase %s)", s_aszExportNames[eId], HHGetPhase());
+@@ -125,6 +125,64 @@ namespace
+ 	void* s_apPerturb[kPerturbSlots];
+ 	unsigned int s_uPerturbState = 0;
+ 	bool s_bPerturb = false;
++
++	// Trial (--sba): a real small-block allocator, as the real exe has one: size classes in 16-byte steps up to 512
++	// bytes, 64 KB pages out of one reserved range, LIFO free lists.
++	const size_t kSbaMax = 512, kSbaStep = 16, kSbaPage = 65536, kSbaReserve = 640u * 1024 * 1024;
++	struct SbaNode { SbaNode* pNext; };
++	SbaNode* s_apSbaFree[kSbaMax / kSbaStep + 1];
++	BYTE* s_apSbaCur[kSbaMax / kSbaStep + 1];
++	BYTE* s_apSbaEnd[kSbaMax / kSbaStep + 1];
++	BYTE s_aSbaClass[kSbaReserve / kSbaPage];
++	BYTE* s_pSbaBase = NULL;
++	BYTE* s_pSbaNext = NULL;
++	volatile LONG s_lSbaLock = 0;
++	inline void SbaLock() { while(InterlockedExchange(&s_lSbaLock, 1)) YieldProcessor(); }
++	inline void SbaUnlock() { s_lSbaLock = 0; }
++	inline bool SbaOwns(void* p) { return (BYTE*)p >= s_pSbaBase && (BYTE*)p < s_pSbaBase + kSbaReserve && s_pSbaBase; }
++	void* SbaAllocate(size_t nSize)
++	{
++		if(nSize > kSbaMax)
++			return NULL;
++		const size_t k = nSize ? (nSize + kSbaStep - 1) / kSbaStep : 1;
++		void* p = NULL;
++		SbaLock();
++		if(SbaNode* pNode = s_apSbaFree[k])
++		{
++			s_apSbaFree[k] = pNode->pNext;
++			p = pNode;
++		}
++		else
++		{
++			if(s_apSbaCur[k] == s_apSbaEnd[k] && s_pSbaNext < s_pSbaBase + kSbaReserve &&
++			   VirtualAlloc(s_pSbaNext, kSbaPage, MEM_COMMIT, PAGE_READWRITE))
++			{
++				s_aSbaClass[(s_pSbaNext - s_pSbaBase) / kSbaPage] = (BYTE)k;
++				s_apSbaCur[k] = s_pSbaNext;
++				s_apSbaEnd[k] = s_pSbaNext + kSbaPage / (k * kSbaStep) * (k * kSbaStep);
++				s_pSbaNext += kSbaPage;
++			}
++			if(s_apSbaCur[k] != s_apSbaEnd[k])
++			{
++				p = s_apSbaCur[k];
++				s_apSbaCur[k] += k * kSbaStep;
++			}
++		}
++		SbaUnlock();
++		return p;
++	}
++	bool SbaFreeBlock(void* p)
++	{
++		if(!SbaOwns(p))
++			return false;
++		const size_t k = s_aSbaClass[((BYTE*)p - s_pSbaBase) / kSbaPage];
++		SbaLock();
++		SbaNode* pNode = (SbaNode*)p;
++		pNode->pNext = s_apSbaFree[k];
++		s_apSbaFree[k] = pNode;
++		SbaUnlock();
++		return true;
++	}
+ 	CRITICAL_SECTION s_csPerturb;
+ 	unsigned int PerturbNext()
+ 	{
+@@ -173,6 +231,12 @@ void HHExportsInit()
+ 	s_tempHeap.uiCapacity = s_tempHeap.pMemHead ? kTempHeapBytes : 0;
+ 	memset(&s_stringAInit, 0, sizeof(s_stringAInit));
+ 	memset(&s_stringWInit, 0, sizeof(s_stringWInit));
++	if(HHGetOptions().sba && !s_pSbaBase)
++	{
++		s_pSbaBase = (BYTE*)VirtualAlloc(NULL, kSbaReserve, MEM_RESERVE, PAGE_READWRITE);
++		s_pSbaNext = s_pSbaBase;
++		HHLog("small-block allocator: %p", s_pSbaBase);
++	}
+ 	const unsigned int uSeed = HHGetOptions().heapPerturb;
+ 	if(uSeed && !s_bPerturb)
+ 	{
+@@ -257,17 +321,15 @@ extern "C"
+ 	}
+ 	void* __cdecl FSBAAllocate(size_t nSize)
+ 	{
+-		UNUSED_VARIABLE(nSize);
+ 		ExportHit(EX_FSBAAllocate);
+ 		if(s_bPerturb)
+ 			PerturbStep();
+-		return NULL;
++		return s_pSbaBase ? SbaAllocate(nSize) : NULL;
+ 	}
+ 	bool __cdecl FSBADeallocate(void* pBlock)
+ 	{
+-		UNUSED_VARIABLE(pBlock);
+ 		ExportHit(EX_FSBADeallocate);
+-		return false;
++		return s_pSbaBase && SbaFreeBlock(pBlock);
+ 	}
+ 	void __cdecl FSBADisable(bool bState)
+ 	{
+@@ -282,20 +344,21 @@ extern "C"
+ 	}
+ 	bool __cdecl FSBAIsSmallBlock(void* pBlock, size_t& stSize)
+ 	{
+-		UNUSED_VARIABLE(pBlock); UNUSED_VARIABLE(stSize);
+ 		ExportHit(EX_FSBAIsSmallBlock);
+-		return false;
++		if(!SbaOwns(pBlock))
++			return false;
++		stSize = (size_t)s_aSbaClass[((BYTE*)pBlock - s_pSbaBase) / kSbaPage] * kSbaStep;
++		return true;
+ 	}
+ 	bool __cdecl FSBAHasAllocatorForSize(size_t tSize)
+ 	{
+-		UNUSED_VARIABLE(tSize);
+ 		ExportHit(EX_FSBAHasAllocatorForSize);
+-		return false;
++		return s_pSbaBase && tSize <= kSbaMax;
+ 	}
+ 	size_t __cdecl FSBAGetMaxAllocatorSize()
+ 	{
+ 		ExportHit(EX_FSBAGetMaxAllocatorSize);
+-		return 0;
++		return s_pSbaBase ? kSbaMax : 0;
+ 	}
+ 	bool __cdecl FSBAPreventCreation(bool bState)
+ 	{
+diff --git a/host/engine/HHRuntime.cpp b/host/engine/HHRuntime.cpp
+index ed45b8f..d96938d 100644
+--- a/host/engine/HHRuntime.cpp
++++ b/host/engine/HHRuntime.cpp
+@@ -256,6 +256,12 @@ void HHImplHit(const char* szName)
+ 	Hit(szName, false);
+ }
+ 
++long* HHImplCounter(const char* szName)
++{
++	Hit(szName, false);
++	return &s_calls[szName].count;
++}
++
+ std::vector<HHCallRecord> HHGetCallRecords()
+ {
+ 	HHScoped lock(s_callLock);
+diff --git a/host/engine/HHRuntime.h b/host/engine/HHRuntime.h
+index 2ce2a6e..4ee392e 100644
+--- a/host/engine/HHRuntime.h
++++ b/host/engine/HHRuntime.h
+@@ -50,6 +50,10 @@ struct HHOptions
+ 	int frameSkew;          // newgame: an extra Update before every frameSkew-th one (0: none)
+ 	int crtSse2;             // _set_SSE2_enable(v) in every loaded MSVCR90 instance (-1: untouched)
+ 	int fpuPrecision;        // x87 precision bits for the new game (24, 53, 64; 0: untouched)
++	int forkGames;           // trial: play this many games, each in a clone of the booted process
++	bool sba;                // trial: small-block allocator
++	__int64 reseedMap;       // trial: map seed after loading a save (-1: keep the save's)
++	__int64 reseedSync;      // trial: sync seed after loading a save (-1: keep the save's)
+ 	__int64 crtSrand;        // srand() on the main thread before the new game (-1: untouched, CRT default 1)
+ 	std::string profilesDir;              // UI emulation profiles (default: HHDefaultProfilesDir)
+ 	bool noProfiles;                      // no UI emulation profiles at all
+@@ -66,7 +70,7 @@ struct HHOptions
+ 	std::vector<int> saveAt;              // save at the autosave point of these turns
+ 	bool saveFinal;                       // save once autoplay has ended (default; --no-save-final: not)
+ 	HHOptions() : language("en_US"), strict(false), verbose(false), gameLogging(false), noGameLogging(false), freeLibrary(true),
+-		noMods(false), luaDebugLibrary(true), exeSeed(-1), crtSrand(-1), fpuPrecision(0), crtSse2(-1), turns(0), noUiFrame(false), randLog(0), gameLogFlags(15), heapPerturb(0), pregameTurnTimer(-1), idleUpdates(10), frameSkew(0), checkpointEvery(1), dumpFrom(-1), dumpTo(-1),
++		noMods(false), luaDebugLibrary(true), exeSeed(-1), forkGames(0), sba(false), reseedMap(-1), reseedSync(-1), crtSrand(-1), fpuPrecision(0), crtSse2(-1), turns(0), noUiFrame(false), randLog(0), gameLogFlags(15), heapPerturb(0), pregameTurnTimer(-1), idleUpdates(10), frameSkew(0), checkpointEvery(1), dumpFrom(-1), dumpTo(-1),
+ 		noProfiles(false), noAddins(false), noDumps(false), autosaveTurns(0), saveFinal(true) {}
+ };
+ 
+diff --git a/host/setup/HHSaveGame.cpp b/host/setup/HHSaveGame.cpp
+index 9b8ee67..bf09ea8 100644
+--- a/host/setup/HHSaveGame.cpp
++++ b/host/setup/HHSaveGame.cpp
+@@ -867,6 +867,20 @@ bool HHLoadSavedGame(const std::string& strPath, HHNewGameInterfaces& kIf, HHNew
+ 	}
+ 	kResult.timings.push_back(std::make_pair(std::string("load_read_game"), HHSeconds() - t0));
+ 
++	// Trial: new seeds for a loaded game. VP's stateless AI rolls (CvGame::randCore) hash the pregame map seed; the
++	// game's generator is the DLL's jonRand. Both are reachable through the official interfaces.
++	if(HHGetOptions().reseedMap >= 0)
++		HH_STEP(HHFormat("setMapRandomSeed(%u)", (unsigned int)HHGetOptions().reseedMap), pg->setMapRandomSeed((unsigned int)HHGetOptions().reseedMap));
++	if(HHGetOptions().reseedSync >= 0)
++	{
++		HH_STEP(HHFormat("setSyncRandomSeed(%u)", (unsigned int)HHGetOptions().reseedSync), pg->setSyncRandomSeed((unsigned int)HHGetOptions().reseedSync));
++		ICvRandom1* pRng = kIf.pGame->GetRandomNumberGenerator();
++		HHLog("reseed: game RNG was %I64u", (unsigned __int64)pRng->GetSeed());
++		pRng->Reset((unsigned long)(HHGetOptions().reseedSync % 52319761));
++		HHLog("reseed: game RNG is %I64u", (unsigned __int64)pRng->GetSeed());
++		pRng->Destroy();
++	}
++
+ 	// D. The rest of the start as for a new game (setup/HHNewGame.h HHGameStartedSteps).
+ 	t0 = HHSeconds();
+ 	HHGameStartedSteps(kIf, kResult, true);
