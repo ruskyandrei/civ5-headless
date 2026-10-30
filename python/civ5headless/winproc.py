@@ -7,7 +7,9 @@
 - CPU topology: physical cores with their efficiency class (P-cores first on hybrid CPUs such as the 13900K).
 - File replace: os.replace retried through a passing sharing violation (a scanner or reader holding the file).
 """
+import contextlib
 import ctypes
+import msvcrt
 import os
 import struct
 import time
@@ -250,6 +252,34 @@ def replace(src, dst, tries=5, delay=0.05):
             if attempt == tries - 1:
                 raise
             time.sleep(delay * 2 ** attempt)
+
+
+@contextlib.contextmanager
+def file_lock(path, waiting=None, timeout=1800, poll=0.1):
+    """Holds path (created if missing) locked against every other process and thread for the with block. Windows drops the
+    lock when its holder dies, so it cannot go stale. waiting() is called once if the lock is taken; RuntimeError after
+    timeout seconds of that."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT)
+    try:
+        deadline, told = time.monotonic() + timeout, False
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(f'waited {timeout} s for {path}: another process holds it, and may be hung') from None
+                if waiting and not told:
+                    waiting()
+                    told = True
+                time.sleep(poll)
+        try:
+            yield
+        finally:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
 
 
 def pid_alive(pid):

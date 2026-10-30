@@ -12,7 +12,9 @@ The key hashes the contents of every .modinfo/.xml/.sql/.lua file below the MODS
 builder reads), the mods database, the DLL (its post-processing runs on the database), the DLC snapshot and
 the builder exe. Without a configured snapshot, the one built from the game's files is used (c5h snapshot).
 Entries live in <db_cache>/<key>/built.db with dbbuild.py's report next to it
-(built.db.build/) and an inputs.json; a finished entry has built.db.ok.
+(built.db.build/) and an inputs.json; a finished entry has built.db.ok. Games started together on an empty cache share one
+build: whoever comes first holds the entry's build.lock and the others wait for it (the snapshot and the mods registry
+likewise).
 
 database(cfg, ...) is what the run, queue and comparison tools use: a database given explicitly, else the configured
 one (db), else the cached build for the mods and DLL (mods=[...]: a mod set, as --mod).
@@ -20,9 +22,10 @@ one (db), else the cached build for the mods and DLL (mods=[...]: a mod set, as 
 from pathlib import Path
 import argparse, hashlib, json, os, subprocess, sys, time
 
-from . import config, modsdb, snapshot
+from . import config, modsdb, snapshot, winproc
 
 SOURCE_EXT = {'.modinfo', '.xml', '.sql', '.lua'}
+LOCK_FILE = 'build.lock'
 PACKAGE_PARENT = Path(__file__).resolve().parents[1]
 _sha_memo = {}
 
@@ -74,19 +77,23 @@ def get_db(mods_dir, mods_db, dll, exe, snapshot, cache, game_dir, log=print, co
     if (entry / 'built.db.ok').is_file() and db.is_file():
         return db, inputs, key
     entry.mkdir(parents=True, exist_ok=True)
-    (entry / 'inputs.json').write_text(json.dumps(inputs, indent=1) + '\n', encoding='utf-8')
-    t = time.monotonic()
-    cmd = [sys.executable, '-B', '-m', 'civ5headless.dbbuild', '--mods-dir', str(mods_dir), '--mods-db', str(mods_db),
-           '--dll', str(dll), '--exe', str(exe), '--snapshot', str(snapshot), '--game-dir', str(game_dir), '--out', str(db)]
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(PACKAGE_PARENT)] + [p for p in [os.environ.get('PYTHONPATH')] if p]))
-    if config_file:
-        env['C5H_CONFIG'] = str(config_file)  # the child reads the same file for anything not on its command line
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
-    (entry / 'build_db.out.txt').write_text(r.stdout + r.stderr, encoding='utf-8')
-    if r.returncode or not db.is_file():
-        raise RuntimeError(f'database build failed (exit {r.returncode}); see {entry / "build_db.out.txt"}')
-    (entry / 'built.db.ok').write_text(f'{time.monotonic() - t:.1f}\n', encoding='ascii')
-    log(f'database built in {time.monotonic() - t:.1f} s: {db}')
+    with winproc.file_lock(entry / LOCK_FILE, waiting=lambda: log(f'another game is building {db}: waiting for it')):
+        if (entry / 'built.db.ok').is_file() and db.is_file():
+            return db, inputs, key
+        (entry / 'built.db.ok').unlink(missing_ok=True)
+        (entry / 'inputs.json').write_text(json.dumps(inputs, indent=1) + '\n', encoding='utf-8')
+        t = time.monotonic()
+        cmd = [sys.executable, '-B', '-m', 'civ5headless.dbbuild', '--mods-dir', str(mods_dir), '--mods-db', str(mods_db),
+               '--dll', str(dll), '--exe', str(exe), '--snapshot', str(snapshot), '--game-dir', str(game_dir), '--out', str(db)]
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(PACKAGE_PARENT)] + [p for p in [os.environ.get('PYTHONPATH')] if p]))
+        if config_file:
+            env['C5H_CONFIG'] = str(config_file)  # the child reads the same file for anything not on its command line
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+        (entry / 'build_db.out.txt').write_text(r.stdout + r.stderr, encoding='utf-8')
+        if r.returncode or not db.is_file():
+            raise RuntimeError(f'database build failed (exit {r.returncode}); see {entry / "build_db.out.txt"}')
+        (entry / 'built.db.ok').write_text(f'{time.monotonic() - t:.1f}\n', encoding='ascii')
+        log(f'database built in {time.monotonic() - t:.1f} s: {db}')
     return db, inputs, key
 
 
