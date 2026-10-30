@@ -11,8 +11,9 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   - The kit with bundled Python is remade and checked.
   - Phase E has started with a short real-game pass (the user asked to keep it short).
   - See the log entry "phase E, first real-game runs" for the outcome.
-- **The real game's DLL is now `E8E58D95`**, the Civ5StackMod AI build `v0.3.3-1-g8fbd4fb9f` (no digest additions).
-  Another session deployed it on 2026-10-26 at 16:20, with its mod files at 16:21, over plain VP 5.4.8 (`262AEE88`),
+- **The real game's DLL is now `D4390E6C`** (2026-10-27; `E8E58D95` before it), the Civ5StackMod AI build `v0.3.3-1-g8fbd4fb9f`
+  (VC9, no digest additions), so the real game is not plain VP.
+  Another session deployed `E8E58D95` on 2026-10-26 at 16:20, with its mod files at 16:21, over plain VP 5.4.8 (`262AEE88`),
   which the user had asked for to play test games. Leave the installed files alone; the source repository's ledger
   says where the installs are archived.
 - **Saved games (2026-10-26, release 0.2.0):** the host reads and writes `.Civ5Save` files. See the log entry
@@ -442,7 +443,6 @@ The host's own history (milestones M0–M6, parity work against the real game) i
 - **AI logging measured:** Tiny, 150 turns: VP CPU 24.3 to 17.0 s (-30%), stock 9.65 to 8.75 s (-9%). Stock with flags 15, 14, 1
   and 0: the same game, 151 of 151 turns, on one seed. VP: flags 15 and 1 the same game, 14 and 0 the same game, and the two
   pairs differ from turn 73 on that seed.
-- **Not run:** the real game, so `c5h verify --quick` has not seen `trajectory.reseed`.
 - **AI logging switch (`--ai-logging`, `aiLogging`, `ai_logging`), and off as `c5h`'s default.** The host's own default stays
   on, so no host change. On the host `E921DD05` with VP on Tiny, 6 turns each: on, off, the config file's off, a run's on over
   the file's off, `--host-arg` flags over the file, and `--no-game-logging` over a run's on. In all six `status.json` agreed
@@ -455,7 +455,7 @@ The host's own history (milestones M0–M6, parity work against the real game) i
     of 150 turns for A/A, frame skew and heap perturbation. All 28 host games of each ran with `gameLogFlags` 0. The one
     warning is `health.ui-hazards`, as before.
   - `c5h verify` with the real game now reads the logging from `config.ini` (this machine's gives `--game-log-flags 15`, as
-    before). Tested with the fake real game only; the real game was not launched.
+    before); run below.
   - The comparison tools warn about a mixed pair. Real runs: `fingerprint compare` of VP on against off warned, and off against
     off did not. `c5h compare` and `queue compare` tested with fake digests and the fake host only, as this AFL DLL writes no
     digests.
@@ -470,3 +470,35 @@ The host's own history (milestones M0–M6, parity work against the real game) i
 - **Seen on the way, not changed:** with VP, the last turn of a game differs in the fingerprint from the same turn of a longer game
   with the same seed (30 against 40 turns: only turn 30 differs, `p00`, `players`). The released host (`89C95256`) does the same,
   and stock does not. So compare games of the same length up to the last turn.
+- **`c5h verify --quick` with the real game (`runs/verify-quick-20261030-150414`; host `E921DD05`, the installed DLL
+  `D4390E6C`, which is Civ5StackMod 0.3.3-1 built with VC9, not plain Vox Populi; its 5 mods, nothing pinned): warn, exit 0,
+  11.1 min.**
+  - 150 of 150 turns identical to the real game (fingerprints: this DLL writes no digests). A/A, frame skew and heap
+    perturbation 150 of 150. Database identical. `trajectory.reseed` passes: this DLL's games respond to the map seed only,
+    and the same seeds repeat (11 of 11 turns). Envelope 97.7%; no bias flagged (global p 0.15).
+  - All 52 host games played with `gameLogFlags` 15, as `config.ini` says. Only `AILog = 1` was tried: a real game with
+    `AILog = 0` has still not been compared.
+  - Warnings: the PreGame getters only one side answers, and 3 reachable UI hazards, as before; and `performance.history`, 0.353
+    s/turn against 0.183 (+93%).
+  - That last one is the DLL, not the host. The 0.183 is plain VP's release, `262AEE88`. Alone on one P-core with AI logging on,
+    the same DLL `D4390E6C`, two runs each: released host (`89C95256`) CPU 53.7 s, wall 58.4 s; new host CPU 51.6 s (-4%), wall
+    55.6 s (-5%); the same game, 151 of 151 turns, and the same as the verify run's.
+  - Afterwards `config.ini` had its seeds back at 0, with no marker left and no game or host process running.
+- **Why that DLL takes twice the CPU of AFL.** AFL is VP master with two crash fixes, a clang build from the Civ5VP conquest
+  experiment (`work/test-runs/conquest/LEDGER.txt`). Tiny, 150 turns, alone on one P-core, AI logging on, CPU:
+
+  | DLL | Compiler | CPU |
+  |---|---|---:|
+  | Plain VP 5.4.8, the official release (`262AEE88`) | clang | 25.2 s |
+  | Plain VP 5.4.8, built here (`9E7D9825`) | clang | 25.4 s |
+  | AFL (`E3C3AF91`), one run, detail `standard` | clang | 25.4 s |
+  | Plain VP 5.4.8, built here (`AABE1AE5`) | VC9 | 35.2 s |
+  | StackMod 0.3.3-1, installed (`D4390E6C`), detail `standard` | VC9 | 51.6 s |
+
+  - So the gap is the compiler (1.39x) times StackMod's own AI work (1.47x), which agrees with StackMod's
+    `docs/headless-turn-time-gap-20261027.md`.
+  - The compiler changes the game: plain VP's VC9 and clang builds differ from turn 37 on this seed. The clang build and the
+    official release are identical, 151 of 151 turns.
+  - In use and not clang: the installed DLL, and `dll` in this checkout's local `civ5headless.toml`, the VC9 digest build
+    `CB6B0BED` (digest builds exist only for VC9). Everything else in use is clang already. StackMod has no clang build of
+    0.3.3-1: its clang recipe came with 0.3.5.

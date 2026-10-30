@@ -127,7 +127,8 @@ prints the Lua that sets up the same game in the real game's setup screen.
 The map seed and the sync seed fix the whole game: the map, the civilizations, the city-states and every AI decision.
 The same spec, seeds, DLL, mods and database give the same game on every run. It is the same game the real game plays when
 both have the same AI logging: with `--ai-logging on` against a real game with `AILog = 1` in `config.ini`
-([ai-logging.md](ai-logging.md)).
+([ai-logging.md](ai-logging.md)). The DLL means the exact build: plain Vox Populi 5.4.8 built with VC9 and with clang played
+different games from turn 37 on the one seed tried, and the clang build took 28% less CPU.
 
 - A spec without seeds gets fresh random ones. They are recorded in the run folder (`spec-resolved.json`), and
   `c5h run runs\NAME\spec-resolved.json --turns N` plays that game again.
@@ -474,6 +475,9 @@ Exit code 0 means identical. A difference that heals within two turns (`--heal-t
 some DLLs alone plays a different game ([ai-logging.md](ai-logging.md)). The warning changes nothing else, and `--json`
 records both settings (`aiLogging`). Bare log files and references recorded from the real game do not say what they had, so
 they get no warning.
+
+Compare games of the same length. With Vox Populi, the last turn of a game can differ from the same turn of a longer game with
+the same seed: 30 against 40 turns differed only at turn 30. The stock DLL did not show this.
 
 ## 9. The verification suite
 

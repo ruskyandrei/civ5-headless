@@ -4,6 +4,19 @@ Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-
 
 ## Unreleased
 
+- **Behaviour change: AI logging is now off by default, and has a switch.** `c5h run --ai-logging on|off`,
+  `run.play(ai_logging=...)`, queue key `aiLogging`, and `ai_logging` in `civ5headless.toml` for games that do not choose
+  ([docs/ai-logging.md](docs/ai-logging.md)).
+  - **This changes which game a seed plays with Vox Populi.** A fixed seed no longer replays a game from an earlier version,
+    or a real game with `AILog = 1`. `--ai-logging on` plays those games, as `c5h` did before. The stock DLL played the same
+    game either way on the one seed tried.
+  - `--detail full` keeps AI logs only with `--ai-logging on`, and warns when it has none to keep.
+  - A logging option in `--host-arg` still wins, and `civ5headless.exe` run by itself, `c5h parity`, `host-first` and `skew`
+    stay on.
+  - `status.json` records what a game played with (`aiLogging`, `gameLogFlags`), the run report's Run row shows it, and
+    `c5h doctor` shows the setting.
+  - `c5h compare`, `c5h fingerprint compare` and `c5h queue compare` warn when the two games had different AI logging, such as
+    a run from before this change against a new one. `--json` and the queue's `.compare.json` record both (`aiLogging`).
 - **A save as a baseline** ([docs/saves.md](docs/saves.md#a-save-as-a-baseline)): `c5h run SAVE --turns T --seeds MAP SYNC`
   plays a save on with new rolls on the same map, so one save can start an ensemble or an A/B test. In a queue, `seeds` x
   `variants` over a `load` works as it does over a spec.
@@ -26,19 +39,7 @@ Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-
     trials. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records
     it (`smallBlockAllocator`).
 - **[docs/ai-logging.md](docs/ai-logging.md)**: what AI logging costs, how a game with it off differs from the same seed
-  with it on, what the logs hold, and how to turn it off.
-- **AI logging is now off by default, and has a switch.** `c5h run --ai-logging on|off`, `run.play(ai_logging=...)`, queue
-  key `aiLogging`, and `ai_logging` in `civ5headless.toml` for games that do not choose.
-  - **This changes which game a seed plays with Vox Populi.** A fixed seed no longer replays a game from an earlier version,
-    or a real game with `AILog = 1`. `--ai-logging on` plays those games, as `c5h` did before. The stock DLL played the same
-    game either way on the one seed tried.
-  - `--detail full` keeps AI logs only with `--ai-logging on`, and warns when it has none to keep.
-  - A logging option in `--host-arg` still wins, and `civ5headless.exe` run by itself, `c5h parity`, `host-first` and `skew`
-    stay on.
-  - `status.json` records what a game played with (`aiLogging`, `gameLogFlags`), the run report's Run row shows it, and
-    `c5h doctor` shows the setting.
-  - `c5h compare`, `c5h fingerprint compare` and `c5h queue compare` warn when the two games had different AI logging, such as
-    a run from before this change against a new one. `--json` and the queue's `.compare.json` record both (`aiLogging`).
+  with it on, what the logs hold, and how to set it.
 - **`c5h run`s started together on an empty database cache no longer fail.** They used to build the same snapshot or database
   over one another (`PermissionError` on `text-schema.db`). Now the first builds and the others wait for it, also for the
   mods registry. A process that dies while building lets the next one take over.

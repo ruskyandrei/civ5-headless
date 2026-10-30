@@ -360,6 +360,7 @@ With the real game, on the development machine (2026-10-26; one real game beside
 | stock BNW DLL, no mods | quick | 5.2 min | warn (PreGame API, UI hazards) | 150 of 150 turns identical (fingerprints); 0.06 against 1.38 s per turn |
 | Vox Populi 5.4.8 release, its 5 mods | quick | 10.1 min | fail (1 ensemble game: localization rebuilt by the real game, since fixed) | 150 of 150 turns identical (fingerprints); 0.18 against 2.29 s per turn |
 | Vox Populi 5.4.8 release, its 5 mods | full | 22.5 min | warn (PreGame API, 3 UI hazards) | 150 of 150 Tiny turns and 60 of 60 Standard turns identical; the real game repeats itself (150 of 150); 64 of 64 ensemble games; 4 of 4 victory games; 0.18 against 2.37 s per turn (Standard: 0.30 against 3.84), 288 MB against 1570 MB |
+| Civ5StackMod 0.3.3-1 (VC9 build, stacking AI), its 5 mods (run 2026-10-30) | quick | 11.1 min | warn (PreGame API, 3 UI hazards, host time against the history, which is plain VP's: this DLL takes about twice the CPU) | 150 of 150 turns identical (fingerprints); 0.35 against 2.35 s per turn, 382 MB against 1789 MB |
 
 ## Output folder
 

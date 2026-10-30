@@ -21,7 +21,8 @@ The two things to remember:
 The real game may have it on: `config.ini` decides there. To compare a `c5h run` game seed by seed with a real game whose
 `config.ini` has `AILog = 1`, or with a run from before off became the default, use `--ai-logging on`.
 
-Measured on 2026-10-30, with Vox Populi 5.4.8 (`Release-5.4.8-9-g6b97a2de`) and the stock DLL.
+Measured on 2026-10-30, with Vox Populi (`Release-5.4.8-9-g6b97a2de`, a clang build 9 commits past the 5.4.8 release with two
+crash fixes, which takes the same CPU as the release) and the stock DLL.
 
 ## What it costs
 
