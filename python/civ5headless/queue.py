@@ -22,13 +22,15 @@ QUEUE.json (relative paths are relative to the queue file's folder):
    "jobs": [{"name": "extra", "turns": 250}]}  # optional explicit jobs (defaults apply)
 
 Job keys: spec or load (a .Civ5Save to continue; its mod set unless mods, noMods or modsDb is given; turns is still
-the turn to play to), turns, dll, db (a built database; otherwise built once per (mods input, DLL) and cached),
+the turn to play to; seeds are then new seeds for the game from there on, so seeds x variants over one save works:
+docs/saves.md, "A save as a baseline"), turns, dll, db (a built database; otherwise built once per (mods input, DLL) and cached),
 modsDir, modsDb, mods (the mod set as ["ID[:VER]", ...]: a generated registry instead of modsDb), noMods, locDb,
 exe, gameDir, profiles, noProfiles, skipAddins, noAddins, fingerprint (true, or {"every": K, "turns": [...],
 "split": N}), seeds ({map, sync} or [map, sync]), diagnostics, improvedMask, abRole, checkpointEvery, maxSeconds, stallSeconds,
 maxMemoryMB, detail (summary, standard (default) or full; the old prune: false is full), report (default true),
-hostArgs, luaProbes, checkpointExtras, finalExtras (Lua files, docs/probes.md), heapPerturb, frameSkew, lowPriority
-(default true), cpuLimit (percent of one core), efficiencyMode, autosave (none (default), game or N), saveAt [turns],
+hostArgs, luaProbes, checkpointExtras, finalExtras (Lua files, docs/probes.md), heapPerturb, frameSkew,
+smallBlockAllocator (the c5h run option --sba), aiLogging ("on" or "off", as --ai-logging; a logging option in hostArgs
+wins), lowPriority (default true), cpuLimit (percent of one core), efficiencyMode, autosave (none (default), game or N), saveAt [turns],
 saveFinal (default true); they are the c5h run options of the same name (a spec that is a .Civ5Save is a load).
 Paths left out (dll, modsDir, modsDb, locDb, exe, gameDir, profiles, db) come from the configuration (c5h doctor);
 the DLL is chosen as c5h run chooses it (a mod set's own, or the game's for noMods, unless dll is given or set in
@@ -52,7 +54,7 @@ from types import SimpleNamespace
 
 from . import config, dbcache, modsdb, savegame, winproc
 from . import run as host_run
-from .compare import digest
+from .compare import digest, mixing
 
 DEFAULTS = dict(turns=100, diagnostics=0, checkpointEvery=1, maxSeconds=7200, stallSeconds=900, maxMemoryMB=3500,
                 hostArgs=[])
@@ -103,6 +105,11 @@ def expand(queue, qpath, cfg=None):
             j['seeds'] = dict(map=seeds[0], sync=seeds[1])  # [map, sync], as in the queue's seeds list
         elif seeds is not None and not (isinstance(seeds, dict) and set(seeds) <= {'map', 'sync'}):
             raise SystemExit(f"job {j['name']}: seeds is {{\"map\": M, \"sync\": S}} or [M, S], not {seeds!r}")
+        if j.get('load'):
+            try:
+                host_run.reseed_of(j.get('seeds'))
+            except ValueError as error:
+                raise SystemExit(f"job {j['name']}: {error}")
         if j.get('load') and j.get('mods') is None and not j.get('noMods') and not j.get('modsDb'):
             try:
                 header = savegame.read_header(j['load'])
@@ -121,6 +128,10 @@ def expand(queue, qpath, cfg=None):
             raise SystemExit(f"job {j['name']}: detail is one of {', '.join(host_run.DETAILS)}, not {j['detail']!r}")
         if j.get('cpuLimit') is not None and not (isinstance(j['cpuLimit'], int) and 1 <= j['cpuLimit'] <= 100):
             raise SystemExit(f"job {j['name']}: cpuLimit is a percent of one core, 1 to 100, not {j['cpuLimit']!r}")
+        try:
+            config.on_off(j.get('aiLogging'), 'aiLogging')
+        except ValueError as error:
+            raise SystemExit(f"job {j['name']}: {error}")
     return jobs
 
 
@@ -179,7 +190,7 @@ def job_args(job, folder, inputs, affinity, parent_job=None, cpu_share=None):
                            fingerprint=job.get('fingerprint'), lua_probe=job.get('luaProbes'),
                            checkpoint_extra=job.get('checkpointExtras'), final_extra=job.get('finalExtras'),
                            heap_perturb=job.get('heapPerturb'),
-                           frame_skew=job.get('frameSkew'),
+                           frame_skew=job.get('frameSkew'), sba=bool(job.get('smallBlockAllocator')), ai_logging=job.get('aiLogging'),
                            diagnostics=int(job.get('diagnostics') or 0), improved_mask=job.get('improvedMask'), ab_role=job.get('abRole'),
                            checkpoint_every=int(job.get('checkpointEvery') or 1), stall_seconds=job.get('stallSeconds'),
                            max_memory_mb=job.get('maxMemoryMB') or None, affinity=affinity, detail=job_detail(job),
@@ -262,6 +273,9 @@ def run(args, cfg):
           + (f', each game capped at {args.cpu_limit}% of a core' if args.cpu_limit else '')
           + (f', all games together at {total}% of a core' if total else '')
           + (', efficiency mode' if args.efficiency_mode else ''))
+    one_seed = [j['name'] for j in pending if j.get('load') and len(host_run.reseed_of(j.get('seeds')) or {}) == 1]
+    if one_seed:
+        q.log(f"warning: {', '.join(one_seed[:5])}{' and more' if len(one_seed) > 5 else ''}: {host_run.ONE_SEED_ONLY}")
     if not pending:
         return summary(q)
     dbs = databases(q, pending)
@@ -407,8 +421,11 @@ def compare(args, cfg):
                 continue
             r = digest.compare(a, b, heal_turns=args.heal_turns)
             same &= r['identical']
+            r['aiLogging'], warning = mixing.check(a, b, js[0]['name'], other['name'])
             results.append(dict(a=js[0]['name'], b=other['name'], **r))
             print(f"{js[0]['name']} / {other['name']}: {digest.summary(r)}")
+            if warning:
+                print(f'  {warning}')
     if results:
         host_run.write(q.qpath.with_suffix('.compare.json'), results)
     tools = Path(args.vpbench) if args.vpbench else None

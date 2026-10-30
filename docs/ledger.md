@@ -11,8 +11,9 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   - The kit with bundled Python is remade and checked.
   - Phase E has started with a short real-game pass (the user asked to keep it short).
   - See the log entry "phase E, first real-game runs" for the outcome.
-- **The real game's DLL is now `E8E58D95`**, the Civ5StackMod AI build `v0.3.3-1-g8fbd4fb9f` (no digest additions).
-  Another session deployed it on 2026-10-26 at 16:20, with its mod files at 16:21, over plain VP 5.4.8 (`262AEE88`),
+- **The real game's DLL is now `D4390E6C`** (2026-10-27; `E8E58D95` before it), the Civ5StackMod AI build `v0.3.3-1-g8fbd4fb9f`
+  (VC9, no digest additions), so the real game is not plain VP.
+  Another session deployed `E8E58D95` on 2026-10-26 at 16:20, with its mod files at 16:21, over plain VP 5.4.8 (`262AEE88`),
   which the user had asked for to play test games. Leave the installed files alone; the source repository's ledger
   says where the installs are archived.
 - **Saved games (2026-10-26, release 0.2.0):** the host reads and writes `.Civ5Save` files. See the log entry
@@ -404,3 +405,144 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   3.4 min, no warnings. 150 of 150 turns for A/A, frame skew and heap perturbation. Its games write `master` -1
   for every civilization.
 - **Release:** the user asked for the merge and a patch release (2026-10-28).
+
+### 2026-10-30: saves as baselines, small speed-ups, AI logging page
+
+- **What it holds** ([plan-speed-and-baselines.md](plan-speed-and-baselines.md)):
+  - `c5h run SAVE --seeds MAP SYNC` and queue jobs with `load` and `seeds`; the host's `loadgame --reseed MAP:SYNC`; the
+    reference `trajectory.reseed` in `c5h verify`; seeds in `status.json`, `setup.json`, `status.save` and the reports.
+  - Engine call counters per call site, one hash per file (`--known-sha256` from `c5h`), `--sba` (off by default).
+  - [ai-logging.md](ai-logging.md).
+- **Seeds, both DLLs, from a save of turn 30 to turn 45 (fingerprints):** same seeds identical on 16 of 16 turns. Vox Populi
+  (AFL, `Release-5.4.8-9-g6b97a2de`) responds to the map seed only, the stock DLL to the sync seed only.
+- **Found on the way:**
+  - The stock DLL ends an autoplayed game on its last turn (`CvGame::update`: active player dead, not an observer, autoplay
+    over), and `Read` makes `GAMESTATE_OVER` extended play. So its final saves stopped right after a load. Autoplay now stops
+    when the state changes, and such a load warns.
+  - `--save-at T` writes nothing when T is the last turn.
+  - Loading calls the stub `getAssignedNetworkID`, unknown to `health.stubs` because `c5h verify` had never loaded a game. The
+    DLL only stores the value in the pregame: on the harmless list.
+  - `CvPlayer::GetBestSettlePlot` and `CvTacticalAI::PlotPillageMoves` are still logging-dependent in VP 5.4.8.
+  - `c5h run`s started together on a cold database cache collided (`PermissionError` on
+    `snapshot.db.build\text-schema.db`). Queues build once before their workers start and were not affected. Fixed below.
+- **Gate, the 0.3.2 host (`89C95256`) against the new build (plan-batch-games.md section 8):**
+  - Fingerprints identical: tactical scenario with its probes and extras (16 of 16), VP Tiny (81 of 81), stock Tiny (61 of 61).
+    Same file lists. Engine call and export counts identical. `newgame-report.json` and `host-report.json` differ only in
+    timings, save sizes (which also vary between two runs of one host), the host's own identity, and the new fields.
+  - `loadgame`: VP from a final save 16 of 16, stock from a `--save-at` save 16 of 16.
+  - Missing DLL, bad spec, Lua error, `--maximum-seconds`, stall: same exit codes and messages.
+  - A small queue: same state and summary fields.
+  - Unit tests: 233 run, 8 skipped, none failed.
+- **Speed:** short game (Duel, 15 turns, one P-core, 9 runs of each): CPU -4.1% (2.297 to 2.203 s), wall -5.4% (2.606 to
+  2.466 s). `--sba` on Tiny, 150 turns: CPU about -3%, wall about -3.5%, identical 151 of 151 turns. The trial's -7% CPU did not
+  repeat. `--sba` is also identical on 100-turn games, VP and stock, 101 of 101 turns.
+- **`verify --host-only` on the final build (`E921DD05`, verdict warn, exit 0):** AFL with 5 mods, and `--no-mods` with the stock
+  DLL: 150 of 150 turns for A/A, frame skew and heap perturbation, `trajectory.reseed` passes. The one warning is
+  `health.ui-hazards`, from the UI file lists, which the gate shows the same on both hosts. With `--host-arg=--sba` on the build
+  before the stub rule: the same trajectory results, and `health.stubs` failing on that stub.
+- **AI logging measured:** Tiny, 150 turns: VP CPU 24.3 to 17.0 s (-30%), stock 9.65 to 8.75 s (-9%). Stock with flags 15, 14, 1
+  and 0: the same game, 151 of 151 turns, on one seed. VP: flags 15 and 1 the same game, 14 and 0 the same game, and the two
+  pairs differ from turn 73 on that seed.
+- **AI logging switch (`--ai-logging`, `aiLogging`, `ai_logging`), and off as `c5h`'s default.** The host's own default stays
+  on, so no host change. On the host `E921DD05` with VP on Tiny, 6 turns each: on, off, the config file's off, a run's on over
+  the file's off, `--host-arg` flags over the file, and `--no-game-logging` over a run's on. In all six `status.json` agreed
+  with `host-report.json` and the report's Run row (`--no-game-logging` is `gameLogFlags` 0 in the status and `gameLogging`
+  false in the host's report). `c5h run` and a queue with one job on and one off also recorded the right setting.
+  - **The new default, Tiny, 150 turns, by fingerprints:** VP, a game that does not choose against `--ai-logging off`: identical,
+    151 of 151 turns; against `on`: first difference at turn 73, as measured earlier on this seed. Stock: all three identical,
+    151 of 151 turns.
+  - **`verify --host-only` on the new default (verdict warn, exit 0):** AFL with 5 mods, and `--no-mods` with the stock DLL: 150
+    of 150 turns for A/A, frame skew and heap perturbation. All 28 host games of each ran with `gameLogFlags` 0. The one
+    warning is `health.ui-hazards`, as before.
+  - `c5h verify` with the real game now reads the logging from `config.ini` (this machine's gives `--game-log-flags 15`, as
+    before); run below.
+  - The comparison tools warn about a mixed pair. Real runs: `fingerprint compare` of VP on against off warned, and off against
+    off did not. `c5h compare` and `queue compare` tested with fake digests and the fake host only, as this AFL DLL writes no
+    digests.
+- **Parallel runs on an empty database cache (`winproc.file_lock`, `build.lock` in each cache entry):**
+  - Eight `c5h run` processes at once on an empty cache, 4 VP and 4 stock, 30 turns. With the lock patched out, as the code was:
+    7 of 8 failed (`PermissionError` WinError 32, one `disk I/O error`). With it, on two fresh caches: 8 of 8, one snapshot and
+    two databases built, the games of each DLL identical to one another, 31 of 31 turns.
+  - Recovery: a lost `built.db`, a partial one, and builds killed with their children at 0.3, 0.8 and 1.5 s were built again, with
+    the same bytes. A snapshot build killed at 0.3 and 0.8 s was built again. Not tried: killing only the Python process, which
+    leaves the host child running.
+  - The cached database against the explicit one, VP, 150 turns: identical, 151 of 151.
+- **Seen on the way, not changed:** with VP, the last turn of a game differs in the fingerprint from the same turn of a longer game
+  with the same seed (30 against 40 turns: only turn 30 differs, `p00`, `players`). The released host (`89C95256`) does the same,
+  and stock does not. So compare games of the same length up to the last turn.
+- **`c5h verify --quick` with the real game (`runs/verify-quick-20261030-150414`; host `E921DD05`, the installed DLL
+  `D4390E6C`, which is Civ5StackMod 0.3.3-1 built with VC9, not plain Vox Populi; its 5 mods, nothing pinned): warn, exit 0,
+  11.1 min.**
+  - 150 of 150 turns identical to the real game (fingerprints: this DLL writes no digests). A/A, frame skew and heap
+    perturbation 150 of 150. Database identical. `trajectory.reseed` passes: this DLL's games respond to the map seed only,
+    and the same seeds repeat (11 of 11 turns). Envelope 97.7%; no bias flagged (global p 0.15).
+  - All 52 host games played with `gameLogFlags` 15, as `config.ini` says. Only `AILog = 1` was tried: a real game with
+    `AILog = 0` has still not been compared.
+  - Warnings: the PreGame getters only one side answers, and 3 reachable UI hazards, as before; and `performance.history`, 0.353
+    s/turn against 0.183 (+93%).
+  - That last one is the DLL, not the host. The 0.183 is plain VP's release, `262AEE88`. Alone on one P-core with AI logging on,
+    the same DLL `D4390E6C`, two runs each: released host (`89C95256`) CPU 53.7 s, wall 58.4 s; new host CPU 51.6 s (-4%), wall
+    55.6 s (-5%); the same game, 151 of 151 turns, and the same as the verify run's.
+  - Afterwards `config.ini` had its seeds back at 0, with no marker left and no game or host process running.
+- **Why that DLL takes twice the CPU of AFL.** AFL is VP master with two crash fixes, a clang build from the Civ5VP conquest
+  experiment (`work/test-runs/conquest/LEDGER.txt`). Tiny, 150 turns, alone on one P-core, AI logging on, CPU:
+
+  | DLL | Compiler | CPU |
+  |---|---|---:|
+  | Plain VP 5.4.8, the official release (`262AEE88`) | clang | 25.2 s |
+  | Plain VP 5.4.8, built here (`9E7D9825`) | clang | 25.4 s |
+  | AFL (`E3C3AF91`), one run, detail `standard` | clang | 25.4 s |
+  | Plain VP 5.4.8, built here (`AABE1AE5`) | VC9 | 35.2 s |
+  | StackMod 0.3.3-1, installed (`D4390E6C`), detail `standard` | VC9 | 51.6 s |
+
+  - So the gap is the compiler (1.39x) times StackMod's own AI work (1.47x), which agrees with StackMod's
+    `docs/headless-turn-time-gap-20261027.md`.
+  - The compiler changes the game: plain VP's VC9 and clang builds differ from turn 37 on this seed. The clang build and the
+    official release are identical, 151 of 151 turns.
+  - In use and not clang: the installed DLL, and `dll` in this checkout's local `civ5headless.toml`, the VC9 digest build
+    `CB6B0BED` (digest builds exist only for VC9). Everything else in use is clang already. StackMod has no clang build of
+    0.3.3-1: its clang recipe came with 0.3.5.
+- **Release dry run on `e245c94`, nothing published:**
+  - Host `344BF2F3` built from clean sources. 250 unit tests, 8 skipped, OK. `make_kit --smoke`: `c5h doctor` exit 0 in the
+    unpacked kit, 12 MB.
+  - `verify --host-only`, Tiny, 150 turns, all 28 games at flags 0: AFL (`E3C3AF91`, 1.0 min) and the stock DLL (`C5483B58`, 0.6
+    min): warn, exit 0, 150 of 150 for A/A, frame skew and heap perturbation, `trajectory.reseed` passes, the one warning
+    `health.ui-hazards`. AFL needs the mods of its own checkout: with the 5.4.8 mods it stops on `no such table:
+    UnitPromotions_TerrainHeal`.
+- **The official VP 5.4.8 DLL (`262AEE88`) does not always repeat. Not a regression; the cause is not found.**
+  - `verify --host-only` on it failed in 3 runs of 7 and gave warn in 4. In each failure the job `trajectory` played another game
+    than `trajectory-aa`, `-skew7` and `-perturb4242`, which agreed, so A/A stops at 118 of 150 and `trajectory.probe-neutral`
+    fails (it compares with the same game).
+  - Only two games ever appear, in every case below: the other one differs from turn 118 on, 33 of 151 turns. At turn 118 the
+    barbarians have 15 units against 9, and player 1 has one unit fewer, with less culture, faith and gold.
+  - The verify commands differ only in the run folder's path. Replaying the command, Tiny, 150 turns, the same seed
+    (30017, 40017), logging off unless named:
+
+    | Case | Host's path length | Other game |
+    |---|---:|---:|
+    | verify's `trajectory` job | 181 | 3 of 7 |
+    | the stamps of failing and passing runs, three times each | 181 | 2 of 15, and a stamp gives either game |
+    | random stamps | 181 | 1 of 16 |
+    | another job name of the same length | 181 | 0 of 2 |
+    | as verify ran it | 181 | 5 of 32 |
+    | without `pregame.lua` | 181 | 2 of 32 |
+    | without `probe-settings.lua` | 181 | 5 of 32 |
+    | without either | 181 | 5 of 32 |
+    | AI logging on | 181 | 5 of 32 |
+    | the released host (`89C95256`), random stamps | 181 | 4 of 16 |
+    | **all of the above** | 181 | **32 of 216** |
+    | other job names | 178 to 185 | 1 of 14 |
+    | verify's `-aa`, `-skew7`, `-perturb4242` | longer | 0 of 21 |
+    | `c5h run`, both hosts, logging on and off | shorter | 0 of 64 |
+    | **all at other lengths** | | **1 of 99** |
+    | AFL, as verify ran it | 181 | 0 of 32 |
+    | AFL, `c5h run`, logging on and off | shorter | 0 of 32 |
+
+  - So it differs from process to process with one command, and neither the probes, nor AI logging, nor this branch's host causes
+    it. Which fits a read of uninitialised or address-dependent memory, as a path's length moves heap blocks, but that is not
+    shown, nor is the host ruled out. AFL's 0 of 64 is one seed, so it does not show that a later commit fixed it.
+  - Earlier passes on this DLL (2026-10-26) ran in run folders of other lengths.
+- **Left for a release:** merge to `main`, version, changelog heading, README status, the kit from the release commit, tag, push,
+  GitHub release. `c5h` from this checkout already defaults to logging off: the Civ5VP conquest experiment runs from it
+  (`work/headless/c5h.py`), and its logged baselines need `ai_logging = "on"` in `work/headless/civ5headless.toml` to stay
+  comparable.

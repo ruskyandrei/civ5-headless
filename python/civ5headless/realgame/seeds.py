@@ -19,6 +19,7 @@ KEYS = ('MapRandSeed', 'SyncRandSeed')
 MARKER = 'config-ini-seeds.json'
 SECTION = 'CONFIG'
 MAX_SEED = 2**31 - 1
+LOG_FLAGS = (('AILog', 1), ('AIPerfLog', 2), ('BuilderAILog', 4), ('PlayerAndCityAILogSplit', 8))  # --game-log-flags
 
 
 class SeedError(Exception):
@@ -57,6 +58,14 @@ def ini_value(config_ini, key):
         if '=' in s and not s.startswith(';') and s.partition('=')[0].strip() == key:
             return s.partition('=')[2].strip()
     return None
+
+
+def host_log_args(config_ini):
+    """The civ5headless.exe options that log as a real game with this config.ini does. A host game compared with a real
+    one needs them: with some DLLs AILog changes the game (docs/ai-logging.md)."""
+    if ini_value(config_ini, 'LoggingEnabled') != '1':
+        return ['--no-game-logging']
+    return ['--game-log-flags', str(sum(bit for key, bit in LOG_FLAGS if ini_value(config_ini, key) == '1'))]
 
 
 def edit(text, values):

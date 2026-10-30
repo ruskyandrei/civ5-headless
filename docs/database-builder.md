@@ -14,7 +14,7 @@ c5h snapshot [--out <snapshot.db>] [--oracle <captured snapshot>] [--dll <DLL>]
 ```
 
 Host games use `c5h dbcache` (through `dbcache.database`): one build per (mods input, DLL, snapshot, host exe), kept
-in `<db_cache>/<key>/built.db`. `c5h dbbuild` builds one database; inputs left out come from the configuration
+in `<db_cache>/<key>/built.db`, one build however many games ask for it at once (they wait on `build.lock` in the entry). `c5h dbbuild` builds one database; inputs left out come from the configuration
 (`c5h doctor`).
 
 Inputs:

@@ -19,6 +19,8 @@ import struct
 import sys
 from pathlib import Path
 
+from . import mixing
+
 P1 = 11400714785074694791
 P2 = 14029467366897019727
 P3 = 1609587929392839161
@@ -227,7 +229,10 @@ def summary(r):
 
 def cmd_compare(a, b, heal_turns=2, json_out=None):
     r = compare(log_path(a), log_path(b), heal_turns)
+    r['aiLogging'], warning = mixing.check(a, b)
     print(summary(r))
+    if warning:
+        print(warning)
     if json_out:
         Path(json_out).write_text(json.dumps(r, indent=1) + '\n', encoding='utf-8')
     return 0 if r['identical'] else 1

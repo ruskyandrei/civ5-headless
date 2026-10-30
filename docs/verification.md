@@ -144,6 +144,7 @@ All references use the trajectory game's spec and seeds, played to the horizon (
 | `trajectory.frame-skew` | `--frame-skew 7`: an extra engine update before every 7th | whether results depend on the number of engine frames (the real game runs other frame counts) |
 | `trajectory.heap-perturb` | `--heap-perturb SEED`: the DLL rebased, random heap spacers | whether results depend on memory addresses |
 | `trajectory.probe-neutral` | without the Lua probes; for a DLL without state digests, with sparse fingerprints (every `sparse_every` = 25 turns) | that the probes the comparison relies on change nothing (no digests: dense and sparse fingerprints agree at the sampled turns) |
+| `trajectory.reseed` | a save of turn `reseed_save_turn` (20) played on for `reseed_turns` (10) with new seeds: the same seeds twice, then one seed changed each | that the same seeds repeat, and which seed changes this DLL's games from a save ([saves.md](saves.md#a-save-as-a-baseline)). Warns when the same seeds differ or neither seed matters. Vox Populi: the map seed; the stock DLL: the sync seed. Needs a host with `--reseed` |
 | `trajectory.real` | the real game against the host's trajectory game | how long the host matches the real game: N |
 | `trajectory.real-aa`, `trajectory.standard` | full mode: real A/A; the Standard game | the real game's own reproducibility; scale |
 
@@ -285,7 +286,7 @@ turns = 150                 # trajectory and ensemble horizon
 workers = 8                 # host games at once in the ensemble phase
 spec = "specs/my-game.json" # or a table; --map, --size, --players, --city-states, --seeds override parts of it
 ensemble_vary = "auto"      # auto, sync or map
-host_args = ["--no-game-logging"]
+host_args = ["--sba"]
 
 [verify.quick]
 ensemble = 24
@@ -299,6 +300,7 @@ ensemble = 24
 | `ensemble`, `ensemble_seed`, `ensemble_vary` | 32 / 64 / 8, 70001, auto | ensemble size, first varied seed, what varies |
 | `workers`, `reference_workers`, `single_phase`, `affinity`, `low_priority` | 8, 4, true, p-first, with the real game | host scheduling |
 | `frame_skew`, `heap_perturb`, `heal_turns` | 7, 4242, 2 | references and transients |
+| `reseed_save_turn`, `reseed_turns` | 20, 10 | `trajectory.reseed`: the save's turn, the loaded games' length (0: no such reference) |
 | `setups`, `setup_turns` | 4 base-game setups, 1 | turn-0 setups: a list of specs (each may have a `name`) |
 | `standard_spec`, `standard_turns`, `victory_games`, `victory_max_turns` | Standard Continents, 0 / 60, 0 / 4, 500 | full mode |
 | `envelope_band`, `envelope_target`, `envelope_alpha`, `envelope_margin` | [0.025, 0.975], 0.95, 0.05, 0.02 | envelope test |
@@ -309,6 +311,12 @@ ensemble = 24
 | `fingerprint`, `sparse_every` | true, 25 | the fingerprint probe: true, false, or `{every, turns, split}`; the probe-off reference of a DLL without digests |
 | `mods`, `no_mods` (`--mod ID[:VER]`, `--no-mods`) | the configuration's mods, false | the mod set of host games, database and real game |
 | `host_args`, `max_memory_mb`, `reserve_seconds`, `regression_threshold`, `strict` | [], 3500, 15, 0.15, false | other |
+
+**AI logging** ([ai-logging.md](ai-logging.md)): with the real game, the host games log as `config.ini` says
+(`LoggingEnabled`, `AILog`, `AIPerfLog`, `BuilderAILog`, `PlayerAndCityAILogSplit`; `hostLogArgs` in `plan.json`), because with
+some DLLs `AILog` changes the game. `ai_logging` in `civ5headless.toml` does not apply to them. It does apply to `--host-only`,
+where there is no real game to match, so those games have AI logging off unless it says on. A logging option in `host_args`
+wins in every mode, and with the real game the run notes that the two sides may then differ.
 
 ## Statistics self-test
 
@@ -343,6 +351,8 @@ Host-only mode, Tiny Continents, 150 turns, 8 host processes at most, on the dev
 |---|---|---|---|
 | Vox Populi (digest additions), its mods | 4.0 min | pass | A/A, frame skew, heap perturbation: 150 of 150 turns (digests); no UI hazard a game can reach (259 input-only); the DLL chose the city-states; the ensemble varies the map seed; 0.43 s per turn, 450 MB |
 | stock BNW DLL, no mods | 0.8 min | warn | the fingerprint compares (no digests): 150 of 150 turns; dense and sparse fingerprints agree; the specs named the city-states and the host applied them; the sync seed changes this DLL's games, so the ensemble keeps the map; 37 game-reachable UI hazards (EUI_core_library and EUI_tooltip_library, EUI being installed as DLC: 20; LeaderHeadRoot, TradeLogic, TopPanel: 17) and 25 EUI files no profile knows: the warning; 0.08 s per turn, 121 MB |
+| Vox Populi master with two crash fixes (AFL), its 5 mods (run 2026-10-30) | 1.0 min | warn (UI hazards) | A/A, frame skew, heap perturbation: 150 of 150 turns (fingerprints); `trajectory.reseed` passes |
+| Vox Populi 5.4.8 release, its 5 mods (7 runs, 2026-10-30) | 1.7 min | warn in 4, fail in 3 | this DLL does not always repeat ([running.md](running.md#32-seeds)): in the 3 the job `trajectory` played the other game, so A/A reaches 118 of 150 turns and `trajectory.probe-neutral` fails; in the 4, 150 of 150 |
 
 With the real game, on the development machine (2026-10-26; one real game beside 8 host processes):
 
@@ -352,6 +362,7 @@ With the real game, on the development machine (2026-10-26; one real game beside
 | stock BNW DLL, no mods | quick | 5.2 min | warn (PreGame API, UI hazards) | 150 of 150 turns identical (fingerprints); 0.06 against 1.38 s per turn |
 | Vox Populi 5.4.8 release, its 5 mods | quick | 10.1 min | fail (1 ensemble game: localization rebuilt by the real game, since fixed) | 150 of 150 turns identical (fingerprints); 0.18 against 2.29 s per turn |
 | Vox Populi 5.4.8 release, its 5 mods | full | 22.5 min | warn (PreGame API, 3 UI hazards) | 150 of 150 Tiny turns and 60 of 60 Standard turns identical; the real game repeats itself (150 of 150); 64 of 64 ensemble games; 4 of 4 victory games; 0.18 against 2.37 s per turn (Standard: 0.30 against 3.84), 288 MB against 1570 MB |
+| Civ5StackMod 0.3.3-1 (VC9 build, stacking AI), its 5 mods (run 2026-10-30) | quick | 11.1 min | warn (PreGame API, 3 UI hazards, host time against the history, which is plain VP's: this DLL takes about twice the CPU) | 150 of 150 turns identical (fingerprints); 0.35 against 2.35 s per turn, 382 MB against 1789 MB |
 
 ## Output folder
 

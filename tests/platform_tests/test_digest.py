@@ -122,6 +122,39 @@ class DigestTest(unittest.TestCase):
         saved = json.loads((self.dir / 'r.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['differing'], {'2': ['map']})
 
+    def test_warns_when_ai_logging_differs(self):
+        def run(name, status, host=None):
+            log = self.log(name, game(4))
+            (log.parents[1] / 'status.json').write_text(json.dumps(status), encoding='utf-8')
+            if host is not None:
+                (log.parents[1] / 'host-report.json').write_text(json.dumps(dict(options=host)), encoding='utf-8')
+            return log.parents[1]
+
+        def compare(a, b):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = digest.compare_main([str(a), str(b), '--json', str(self.dir / 'r.json')])
+            self.assertEqual(code, 0)  # the warning changes nothing else
+            return out.getvalue(), json.loads((self.dir / 'r.json').read_text(encoding='utf-8'))['aiLogging']
+
+        on, off = run('on', dict(aiLogging=True)), run('off', dict(aiLogging=False))
+        text, settings = compare(on, off)
+        self.assertIn(f'different AI logging: {on} on, {off} off', text)
+        self.assertEqual(settings, [True, False])
+        self.assertIn('different AI logging', compare(on / 'Logs', off / 'Logs/HeadlessDigest.log')[0])
+        self.assertNotIn('warning', compare(off, run('off2', dict(aiLogging=False)))[0])
+        # an older run: its host report says
+        old = run('old', dict(state='completed'), dict(gameLogging=True, gameLogFlags=15))
+        self.assertIn(f'{old} on', compare(old, off)[0])
+        self.assertNotIn('warning', compare(old, on)[0])
+        # nothing known about one side: no warning
+        bare = self.dir / 'bare.log'
+        bare.write_text(game(4), encoding='utf-8')
+        for other in (bare, run('unsaid', dict(state='completed')), self.log('nostatus', game(4)).parents[1]):
+            text, settings = compare(off, other)
+            self.assertNotIn('warning', text)
+            self.assertEqual(settings, [False, None])
+
     def test_verify_dump(self):
         dump = self.dir / 'dump-t000'
         dump.mkdir()

@@ -87,6 +87,8 @@ class Settings:
     reference_workers: int = 4          # the host references (A/A, skew, perturbation, probe off) side by side
     frame_skew: int = 7                 # host --frame-skew K reference
     heap_perturb: int = 4242            # host --heap-perturb SEED reference
+    reseed_save_turn: int = 20          # trajectory.reseed: the save it loads is of this turn of the trajectory game
+    reseed_turns: int = 10              # trajectory.reseed: the loaded games' length (0: no such reference)
     heal_turns: int = 2                 # differences that heal within this many turns are transients
     setups: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_SETUPS))
     setup_turns: int = 1                # turn-0 setups play this many turns (the fingerprint prints at turn 0)

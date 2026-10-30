@@ -27,9 +27,11 @@ from .. import dbcache, modsdb
 from .. import run as host_run
 from .. import spec as gamespec
 from ..probes import fingerprint_options
+from ..realgame import seeds as real_seeds
 from . import capabilities, checks, exact, hostside, perf, pins, probes, realside, report, series
 
 FORMAT = 'civ5headless-verify/1'
+RESEED_A, RESEED_B = (81001, 82001), (81002, 82002)  # trajectory.reseed's seeds; a pair's other game takes one of B's
 
 
 def freeze_mods(settings, cfg):
@@ -87,6 +89,13 @@ class Suite:
             self.loc_db.parent.mkdir(exist_ok=True)
             shutil.copy2(cfg.loc_db, self.loc_db)
             self.log(f'localization: {cfg.loc_db} copied before the real game starts')
+        # The host games log as the real game does, whatever ai_logging says: with some DLLs AILog changes the game.
+        self.host_log_args = []
+        if s.real and cfg.config_ini and Path(cfg.config_ini).is_file():
+            self.host_log_args = real_seeds.host_log_args(cfg.config_ini)
+            self.log(f"logging: the host games log as config.ini says ({' '.join(self.host_log_args)})")
+            if set(host_run.LOG_OPTIONS) & set(s.host_args):
+                self.notes.append('host_args sets the logging, so the host games may not log as the real game does')
         # The DLL as run.play chooses it (modsdb.choose_dll): the host games get the same one from s.dll and the mods.
         self.dll, why = modsdb.choose_dll(cfg, s.dll, [] if s.no_mods else s.mods)
         self.log(f'DLL {self.dll} ({why})')
@@ -247,6 +256,16 @@ class Suite:
             if setup_jobs:
                 phases.append(hostside.Phase('setups', min(s.workers, len(setup_jobs)), setup_jobs))
             phases += single + [references] + ens
+        if s.reseed_turns and self.caps.has('--reseed'):
+            # New seeds for a loaded game: a game saved at reseed_save_turn, then that save played on with two seed pairs
+            # that differ in one seed each, the first of them twice.
+            turn, end = s.reseed_save_turn, s.reseed_save_turn + s.reseed_turns
+            phases.append(hostside.Phase('reseed-save', 1, [self._job('reseed-save', 'reseed', traj, turn + 1, tseeds, 'reseed-save', tsize,
+                                                                      save_at=[turn])]))
+            phases.append(hostside.Phase('reseed', min(s.workers, 4), [
+                self._job(f'reseed-{role}', 'reseed', traj, end, seeds, f'reseed-{role}', tsize)
+                for role, seeds in (('a', RESEED_A), ('a2', RESEED_A), ('map', (RESEED_B[0], RESEED_A[1])),
+                                    ('sync', (RESEED_A[0], RESEED_B[1])))]))
         long_jobs = []
         if self.standard is not None:
             long_jobs.append(self._job('standard', 'standard', specs / 'standard.json', s.standard_turns,
@@ -260,9 +279,11 @@ class Suite:
         self.phases = phases
 
     def between(self, phase):
-        """After each phase: how the probe-off reference runs (decide_noprobe); after the phase with the sync-seed
-        probe: what the ensemble varies (ensemble_vary auto)."""
+        """After each phase: how the probe-off reference runs (decide_noprobe); after the game that saves: the save the
+        reseed games load (decide_reseed); after the phase with the sync-seed probe: what the ensemble varies
+        (ensemble_vary auto)."""
         self.decide_noprobe(phase)
+        self.decide_reseed(phase)
         if self.settings.ensemble_vary != 'auto' or not any(j.kind == 'probe' for j in phase.jobs):
             return
         jobs = {j.role: j for j in phase.jobs}
@@ -286,6 +307,20 @@ class Suite:
             self.vary_reason = (f'two games with different sync seeds differ ({how})' if same is False else
                                 'the sync-seed probe could not compare the games; sync seeds by default')
         self.log(f'ensemble varies the {self.vary} seed: {self.vary_reason}')
+
+    def decide_reseed(self, phase):
+        """The reseed games load the --save-at save of the reseed-save game, or are skipped without it."""
+        saver = next((j for j in phase.jobs if j.role == 'reseed-save'), None)
+        if saver is None:
+            return
+        save = next((x['path'] for x in saver.status.get('saves') or [] if x.get('kind') == 'turn'), None)
+        for p in self.phases:
+            for j in p.jobs:
+                if j.kind == 'reseed' and j is not saver:
+                    if save:
+                        j.spec = Path(save)
+                    else:
+                        j.state, j.error = 'skipped', f'the game that saves left no save ({saver.state})'
 
     def decide_noprobe(self, phase):
         """A DLL without state digests can only be compared through the fingerprint, so a game without any probe
@@ -396,7 +431,7 @@ class Suite:
             format=FORMAT, mode=self.settings.mode, settings=self.settings.to_dict(), capabilities=self.caps.to_dict(),
             inputs=self.inputs(), probes=[str(p) for p in self.probes], fingerprint=self.fingerprint,
             fingerprintProbe=str(self.caps.fingerprint_probe) if self.caps.fingerprint_probe else None,
-            pinning=self.pinning, estimateSeconds=round(self.estimate, 1),
+            pinning=self.pinning, hostLogArgs=self.host_log_args, estimateSeconds=round(self.estimate, 1),
             notes=self.notes, phases=[dict(name=p.name, workers=p.workers, throughput=p.throughput, jobs=[j.to_dict() for j in p.jobs])
                                       for p in self.phases],
             trimmed=[j.to_dict() for j in getattr(self, '_trimmed', [])],
@@ -410,7 +445,7 @@ class Suite:
         self.pins = pins.Pins() if self.pinning else None
         host = hostside.HostSide(self.cfg, s, self.phases, self.out, self.deadline, self.t0, str(self.db), self.cost,
                                  play=self.play, log=self.log, between=self.between, pins=self.pins, pin_spec=self.pin_spec,
-                                 loc_db=self.loc_db)
+                                 loc_db=self.loc_db, log_args=self.host_log_args)
         timeline = perf.LoadTimeline(self.t0, hosts=host.sample, real_state=real_state).start()
         real = None
         try:

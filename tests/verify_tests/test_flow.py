@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 from civ5headless import config
+from civ5headless import run as host_run
 from civ5headless.verify import capabilities, settings as settings_mod, suite
 
 from fake_session import FakeRealGameSession
@@ -80,6 +81,17 @@ SMALL = dict(turns=12, ensemble=10, workers=4, reference_workers=2, min_members=
              affinity='none', reserve_seconds=5)
 
 
+def _no_save(suite_, phase):
+    """Suite.decide_reseed, with the game that saves having left no save."""
+    for j in phase.jobs:
+        if j.role == 'reseed-save':
+            j.status = dict(j.status, saves=[])
+    _DECIDE_RESEED(suite_, phase)
+
+
+_DECIDE_RESEED = suite.Suite.decide_reseed
+
+
 @unittest.skipUnless(os.name == 'nt', 'Windows only (job objects)')
 class FlowTest(unittest.TestCase):
     def setUp(self):
@@ -91,7 +103,7 @@ class FlowTest(unittest.TestCase):
         for name in ('mods.db', 'loc.db', 'game.dll'):
             (tmp / name).write_bytes(b'x')
         self.cfg = config.Config(game_dir=tmp / 'game', mods_dir=tmp / 'MODS', mods_db=tmp / 'mods.db', loc_db=tmp / 'loc.db',
-                                 dll=tmp / 'game.dll', exe=HERE / 'fake_host.cmd', db=db, runs=tmp / 'runs',
+                                 dll=tmp / 'game.dll', exe=HERE / 'fake_host.cmd', db=db, runs=tmp / 'runs', db_cache=tmp / 'cache',
                                  probes=REPO / 'probes')
         self.env = mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable, 'C5H_FAKE_LUA_PROBE': '1'})
         self.env.start()
@@ -182,6 +194,82 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(len(hist), 1)
         suite.analyse(out, self.cfg, log=lambda m: None)
         self.assertEqual(len(hist[0].read_text(encoding='utf-8').splitlines()), 1)
+
+    def reseed_suite(self, **env):
+        with mock.patch.dict(os.environ, dict(C5H_FAKE_RESEED='1', **env)), mock.patch.object(host_run, 'host_supports', return_value=True):
+            return self.run_suite('host-only', no_mods=True, dll=str(self.root / 'game.dll'), ensemble=0, setups=[], reseed_save_turn=4, reseed_turns=4)
+
+    def test_reseed_reference(self):
+        """A game saves at turn 4, its save plays on with seeds that differ in one seed each: the check says which matter."""
+        doc = self.reseed_suite()
+        c = self.checks['trajectory.reseed']
+        self.assertEqual(c['status'], 'pass', c['summary'])
+        self.assertEqual(c['details']['responds'], ['map'])  # the fake game, as VP, ignores the sync seed
+        self.assertIn('respond to the map seed only', c['summary'])
+        self.assertEqual(c['details']['matchedTurns'], 4)
+        jobs = {j['name']: j for j in doc['jobs']}
+        self.assertEqual(jobs['reseed-a']['seeds'], [81001, 82001])
+        self.assertEqual(jobs['reseed-map']['seeds'], [81002, 82001])
+        self.assertEqual(jobs['reseed-sync']['seeds'], [81001, 82002])
+        status = json.loads((Path(doc['run']) / 'host/reseed-a/status.json').read_text(encoding='utf-8'))
+        self.assertEqual((status['startTurn'], status['endTurn'], status['reseed']), (4, 8, {'map': 81001, 'sync': 82001}))
+        self.assertIn('Turn_0004', status['loadedFrom'])
+
+    def test_reseed_both_seeds_and_no_repeat(self):
+        self.reseed_suite(C5H_FAKE_SYNC_MATTERS='1')
+        self.assertEqual(self.checks['trajectory.reseed']['details']['responds'], ['map', 'sync'])
+        self.reseed_suite(C5H_FAKE_NONDETERMINISTIC='5')
+        c = self.checks['trajectory.reseed']
+        self.assertEqual(c['status'], 'warn')
+        self.assertIn('the same seeds differ from turn 5', c['summary'])
+
+    def test_reseed_needs_the_host_option(self):
+        self.run_suite('host-only', no_mods=True, dll=str(self.root / 'game.dll'), ensemble=0, setups=[])
+        self.assertEqual(self.status('trajectory.reseed'), 'n/a')
+        self.assertIn('no --reseed', self.checks['trajectory.reseed']['summary'])
+
+    def test_reseed_without_a_save(self):
+        """The game that saves left no save: the reseed games are skipped, and the check says so."""
+        with mock.patch.dict(os.environ, dict(C5H_FAKE_RESEED='1')), mock.patch.object(host_run, 'host_supports', return_value=True), \
+                mock.patch.object(suite.Suite, 'decide_reseed', autospec=True, side_effect=lambda self_, phase: _no_save(self_, phase)):
+            self.run_suite('host-only', no_mods=True, dll=str(self.root / 'game.dll'), ensemble=0, setups=[], reseed_save_turn=4, reseed_turns=4)
+        self.assertEqual(self.status('trajectory.reseed'), 'skipped')
+        self.assertIn('left no save', self.checks['trajectory.reseed']['summary'])
+
+    def host_logging(self, doc_out):
+        """{(aiLogging, gameLogFlags)} of the host games of a suite run."""
+        status = [json.loads(p.read_text(encoding='utf-8')) for p in (doc_out / 'host').glob('*/status.json')]
+        self.assertTrue(status)
+        return {(s['aiLogging'], s['gameLogFlags']) for s in status}
+
+    def test_host_games_log_as_the_real_game_does(self):
+        """Whatever ai_logging says: a real game and a host game with the same seed need the same setting."""
+        ini = self.root / 'config.ini'
+        ini.write_text('[Debug]\nLoggingEnabled = 1\nAILog = 0\nBuilderAILog = 1\n', encoding='utf-8')
+        self.cfg.config_ini = ini
+        self.cfg.ai_logging = 'on'
+        self.run_suite('quick')
+        out = max(self.root.glob('out-quick-*'))
+        self.assertEqual(self.host_logging(out), {(False, 4)})
+        plan = json.loads((out / 'plan.json').read_text(encoding='utf-8'))
+        self.assertEqual(plan['hostLogArgs'], ['--game-log-flags', '4'])
+        self.assertEqual(plan['notes'], [])
+        # host_args still wins, with a note
+        self.run_suite('quick', host_args=['--game-log-flags', '15'])
+        out = max(self.root.glob('out-quick-*'))
+        self.assertEqual(self.host_logging(out), {(True, 15)})
+        self.assertIn('host_args sets the logging', ' '.join(json.loads((out / 'plan.json').read_text(encoding='utf-8'))['notes']))
+
+    def test_host_only_follows_ai_logging(self):
+        ini = self.root / 'config.ini'
+        ini.write_text('[Debug]\nLoggingEnabled = 1\nAILog = 1\n', encoding='utf-8')  # no real game: not read
+        self.cfg.config_ini = ini
+        with mock.patch.object(suite.host_run, 'host_supports', return_value=True):
+            self.run_suite('host-only')
+            self.assertEqual(self.host_logging(max(self.root.glob('out-host-only-*'))), {(False, 0)})
+            self.cfg.ai_logging = 'on'
+            self.run_suite('host-only')
+            self.assertEqual(self.host_logging(max(self.root.glob('out-host-only-*'))), {(True, 15)})
 
     def test_real_divergence_fails(self):
         FakeRealGameSession.diverge_at = 7

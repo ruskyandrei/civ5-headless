@@ -2,7 +2,7 @@
 run folder.
 
   c5h run (SPEC.json | SAVE.Civ5Save | --load SAVE.Civ5Save) --turns N [--run NAME | --run-dir DIR] [--seeds MAP SYNC]
-          [--autosave none|game|N] [--save-at T]... [--no-save-final]
+          [--autosave none|game|N] [--save-at T]... [--no-save-final] [--sba] [--ai-logging on|off]
           [--dll DLL] [--db DB] [--mods-dir MODS] [--mods-db Civ5ModsDatabase.db | --mod ID[:VER]... | --no-mods]
           [--loc-db DB] [--game-dir DIR] [--exe EXE]
           [--profiles DIR | --no-profiles] [--skip-addin NAME]... [--no-addins]
@@ -32,8 +32,10 @@ Saves (docs/saves.md): the host writes the real game's .Civ5Save files, which th
 game's. A .Civ5Save given instead of the spec (or --load SAVE) continues that game: --turns is still the turn to play to
 (after the save's), the mod set is the save's unless --mod, --no-mods or --mods-db says otherwise (the configured
 registry when it activates just those mods, else one generated for them, so the game need not have them activated),
-and the DLL is chosen as above; the host refuses a save whose DLL (its GUID) or mods differ. Seeds do not apply: the
-save carries its random state.
+and the DLL is chosen as above; the host refuses a save whose DLL (its GUID) or mods differ. Without --seeds the save
+keeps its random state; with them the map stays the save's and what is rolled from there on changes, so one save can
+start an ensemble or an A/B test (docs/saves.md, "A save as a baseline"). Give both seeds: Vox Populi rolls from the map
+seed and the stock DLL from the sync seed, so the other one alone leaves the game as it was.
 Every save stays in the run folder, <run>/saves. The host saves the last turn, Final_<turn and date>, unless
 --no-save-final; more only when asked: --autosave none (default: none, as autosaves slow a game down), game (the
 game's own setting, UserSettings.ini TurnsBetweenAutosave) or N (every N turns): as the real game, at turn 0
@@ -43,7 +45,7 @@ are kept at every detail level.
 
 Detail (--detail, default standard): summary keeps what happened and how fast (no per-turn checkpoints, digests or
 logs but Lua.log), standard adds the per-turn checkpoints and the small logs, full keeps everything the host writes
-(state dumps, the database copies, the DLL's AI logs). The host is told not to write what the level leaves out; the
+(state dumps, the database copies, the DLL's logs: its AI logs with --ai-logging on). The host is told not to write what the level leaves out; the
 database copies it needs while it runs are deleted afterwards. report.html is written at the end (--no-report: not;
 c5h report RUN rebuilds it).
 
@@ -65,6 +67,16 @@ single-threaded). The game plays the same, only slower, and --maximum-seconds an
 on hybrid CPUs) and idle priority. status.json records both (cpuLimit, efficiencyMode, and totalCpuLimit for a queue's
 cap shared by its games, queue.py); the timings of such a run are not the host's speed.
 
+--sba gives the DLL a real small-block allocator, as the real exe has: long games use a little less CPU. It moves every
+small block, so use it with a DLL that passes trajectory.heap-perturb (c5h verify). status.json records it
+(smallBlockAllocator).
+
+--ai-logging on|off (default: ai_logging in civ5headless.toml, else off) decides whether the DLL builds its AI logs
+(docs/ai-logging.md). Off saves about 30% of a long Vox Populi game. There the same seed plays a different game with it on,
+which is what a real game with AILog = 1 plays, so give every game in a comparison the same setting. A logging option in
+--host-arg wins over it. status.json records what the game played with: aiLogging, and gameLogFlags (the host's
+--game-log-flags).
+
 The run folder has the files vpbench writes and its readers use (compare.py, abcompare.py, samerun.py):
 events.jsonl, setup.json, spec-resolved.json, status.json, turn-times.jsonl, turn-seen.json,
 checkpoints/turn-NNNN.json (+ turn-NNNN-final.json), replay-messages.json, replay-data.json; plus final-state.json
@@ -78,7 +90,8 @@ Differences from a real-game run (docs/user-guide.md, "Run folders"):
 - status.process comes from the host process (CPU seconds, peak working set, peak private bytes);
   pollSeconds is 0; finalSave is the host's save of the last turn (none with --no-save-final); status.save is a seed key
   "headless-<spec stem>-m<map seed>-s<sync seed>-<spec hash>" that groups runs of the same game for abcompare.py
-  (for --load: "loaded-<save name>-t<turn>-<file hash>", and loadedFrom is the save);
+  (for --load: "loaded-<save name>-t<turn>-<file hash>", then -m<map>-s<sync> with new seeds, and loadedFrom is the
+  save);
 - the improved-AI mask: --improved-mask needs a DLL with Game.SetStackingAIImprovedMask; for an A/B of
   two DLL builds use --ab-role, which records improvedMask 0 (baseline) or -1 (test: every player runs the
   test DLL) in setup.json.
@@ -225,6 +238,17 @@ DETAIL_LOGS = {'summary': ('Lua.log', 'Headless.log'),
 REQUESTED_LOGS = ('Stacking-*.log', 'RandCalls.csv', 'HeadlessDumps')  # asked for by an option: kept at every level
 ESSENTIAL_LOGS = DETAIL_LOGS['standard'] + REQUESTED_LOGS  # what --prune kept (now --detail standard)
 
+# The host's --game-log-flags: 1 AILog, 2 AIPerfLog, 4 BuilderAILog, 8 PlayerAndCityAILogSplit. Its default is all of them;
+# games from here default to none (docs/ai-logging.md).
+ALL_GAME_LOGS = 15
+DEFAULT_AI_LOGGING = 'off'
+LOG_OPTIONS = ('--game-log-flags', '--game-logging', '--no-game-logging')
+FULL_WITHOUT_AI_LOGS = ("AI logging is off, so --detail full keeps no AI logs. --ai-logging on plays with them, which with "
+                        "some DLLs is a different game (docs/ai-logging.md)")
+
+ONE_SEED_ONLY = ("only one new seed: DLLs roll from one of the two (Vox Populi the map seed, the stock DLL the sync seed), "
+                 "so with the other this game stays the save's; give both (docs/saves.md)")
+
 
 def utc(): return datetime.now(timezone.utc).isoformat()
 
@@ -362,12 +386,33 @@ def run_folder(a, cfg):
     return (cfg.require('runs') / name).resolve()
 
 
-def load_key(header):
-    """status.save for a loaded game: "loaded-<save name>-t<turn>-<file hash>" (runs from the same save group)."""
+def load_key(header, reseed=None):
+    """status.save for a loaded game: "loaded-<save name>-t<turn>-<file hash>", then -m<map>-s<sync> for the new seeds
+    it has (runs from the same save with the same seeds group)."""
     with open(header.path, 'rb') as f:
         digest = hashlib.sha256(f.read()).hexdigest()[:8]
     stem = re.sub(r'[^\w.-]+', '-', Path(header.path).stem).strip('-')
-    return f'loaded-{stem}-t{header.turn}-{digest}'
+    seeds = ''.join(f'-{k[0]}{reseed[k]}' for k in ('map', 'sync') if k in (reseed or {}))
+    return f'loaded-{stem}-t{header.turn}-{digest}{seeds}'
+
+
+def reseed_of(seeds):
+    """A loaded game's new seeds, {map, sync} with the ones given (a seed left out stays the save's), or None. Raises
+    ValueError for anything but numbers from 0 to 2^32 - 1."""
+    reseed = {k: seeds[k] for k in ('map', 'sync') if (seeds or {}).get(k) is not None}
+    for k, v in reseed.items():
+        if not isinstance(v, int) or isinstance(v, bool) or not 0 <= v < 2 ** 32:
+            raise ValueError(f'the {k} seed is a number from 0 to 4294967295, not {v!r}')
+    return reseed or None
+
+
+def reseed_host_args(reseed, exe):
+    """The host option for a loaded game's new seeds. Raises ValueError with a host that cannot do it."""
+    if not reseed:
+        return []
+    if not host_supports(exe, '--reseed'):
+        raise ValueError(f'{exe} predates new seeds for a loaded game (no --reseed); use a newer host')
+    return ['--reseed', f"{reseed.get('map', '')}:{reseed.get('sync', '')}"]
 
 
 def load_mod_set(cfg, header):
@@ -392,6 +437,42 @@ def save_host_args(a, exe):
     if not getattr(a, 'save_final', True) and host_supports(exe, '--no-save-final'):
         args += ['--no-save-final']
     return args
+
+
+def sba_host_args(a, exe):
+    """The host option for the small-block allocator, off unless asked for. Raises ValueError with a host without it."""
+    if not getattr(a, 'sba', False):
+        return []
+    if not host_supports(exe, '--sba'):
+        raise ValueError(f'{exe} predates the small-block allocator (no --sba); use a newer host')
+    return ['--sba']
+
+
+def ai_logging_host_args(a, exe, cfg):
+    """The host option for AI logging: a's choice, else the configuration's, else off. None when a.host_arg sets the
+    logging itself, which wins. Raises ValueError when a host without the option is asked for off; asked for nothing,
+    such a host plays with its own default, on."""
+    chosen = config.on_off(getattr(a, 'ai_logging', None)) or cfg.ai_logging
+    if set(LOG_OPTIONS) & set(a.host_arg or []):
+        return []
+    if host_supports(exe, '--game-log-flags'):
+        return ['--game-log-flags', str(ALL_GAME_LOGS if (chosen or DEFAULT_AI_LOGGING) == 'on' else 0)]
+    if chosen == 'off':
+        raise ValueError(f'{exe} predates turning AI logging off (no --game-log-flags); use a newer host')
+    return []
+
+
+def game_logging_of(cmd):
+    """(AI logging on, the log flags in force) of a host command line, as the host reads it: the last --game-log-flags,
+    default all; no flags with --no-game-logging, unless --game-logging is there too. Flag 1 is AILog."""
+    flags = ALL_GAME_LOGS
+    for option, value in zip(cmd, cmd[1:]):
+        if option == '--game-log-flags':
+            number = re.match(r'\s*[-+]?\d+', value)  # atoi
+            flags = int(number[0]) if number else 0
+    if '--no-game-logging' in cmd and '--game-logging' not in cmd:
+        flags = 0
+    return bool(flags & 1), flags
 
 
 def fingerprint_options(a):
@@ -419,12 +500,15 @@ def newgame(a, quiet=False, cfg=None):
         save_file = Path(a.load).resolve() if getattr(a, 'load', None) else None
         header = savegame.read_header(save_file) if save_file else None
         start_turn = header.turn if header else 0
+        reseed = reseed_of(getattr(a, 'seeds', None)) if header else None
         if header:
             write(run.dir / 'save-header.json', header.as_dict())
             run.log('load', quiet=quiet, save=str(save_file), turn=header.turn, civilization=header.civilization,
-                    mods=header.mod_set, dllGuid=header.dllGuid)
+                    mods=header.mod_set, dllGuid=header.dllGuid, reseed=reseed)
             if a.target_turn <= header.turn:
                 raise ValueError(f'the save is at turn {header.turn}: --turns {a.target_turn} must be after it')
+            if reseed and len(reseed) == 1:
+                run.log('warning', quiet=quiet, message=ONE_SEED_ONLY)
             if mod_set is None and not getattr(a, 'mods_db', None):
                 mod_set = load_mod_set(cfg, header)
                 no_mods = mod_set == []
@@ -457,12 +541,13 @@ def newgame(a, quiet=False, cfg=None):
         db, dbinfo = dbcache.database(cfg, db=a.db, mods_dir=mods_dir, mods_db=mods_db, dll=dll, exe=exe,
                                       log=lambda m: run.log('database_built', quiet=quiet, message=m))
         if header:
-            seed_key = load_key(header)
+            seed_key = load_key(header, reseed)
         else:
             resolved = resolve_spec(a.spec, db, getattr(a, 'seeds', None))
             write(run.dir / 'spec-resolved.json', resolved)
             seed_key = spec_key(resolved, a.spec)
         dll_sha = dbcache.sha256_file(dll)
+        exe_sha = dbcache.sha256_file(exe)
         mask = a.improved_mask
         (run.dir / 'hh-before-arm.lua').write_text(BEFORE_ARM % dict(setup=SETUP, diagnostics=a.diagnostics,
                                                                        mask='nil' if mask is None else int(mask)), encoding='utf-8')
@@ -471,7 +556,8 @@ def newgame(a, quiet=False, cfg=None):
                                                    encoding='utf-8')
         (run.dir / 'hh-final.lua').write_text(probes.with_extra(FINAL, probes.extra_lua('final', final_extras, run.dir)),
                                               encoding='utf-8')
-        game = ['loadgame', '--load', str(save_file)] if save_file else ['newgame', '--spec', str(run.dir / 'spec-resolved.json')]
+        game = (['loadgame', '--load', str(save_file)] + reseed_host_args(reseed, exe) if save_file else
+                ['newgame', '--spec', str(run.dir / 'spec-resolved.json')])
         cmd = [str(exe)] + game + ['--out', str(run.dir.resolve()),
                '--dll', str(dll), '--db', str(db), '--turns', str(a.target_turn - start_turn),
                '--lua-before-arm', str(run.dir / 'hh-before-arm.lua'),
@@ -495,16 +581,22 @@ def newgame(a, quiet=False, cfg=None):
             cmd += ['--lua-probe', str(probe)]
         if getattr(a, 'heap_perturb', None): cmd += ['--heap-perturb', str(a.heap_perturb)]
         if getattr(a, 'frame_skew', None): cmd += ['--frame-skew', str(a.frame_skew)]
+        cmd += sba_host_args(a, exe)
+        cmd += ai_logging_host_args(a, exe, cfg)
         cmd += save_host_args(a, exe)
         cmd += detail_host_args(detail, exe)
+        if host_supports(exe, '--known-sha256'):  # hashed already: the host's reports need not read them again
+            cmd += ['--known-sha256', f'{exe}={exe_sha}', '--known-sha256', f'{dll}={dll_sha}']
         cmd += list(a.host_arg or [])
-        write(run.dir / 'hh-command.json', dict(command=cmd, exe=str(exe), exeSHA256=dbcache.sha256_file(exe), dll=str(dll),
+        if detail == 'full' and getattr(a, 'ai_logging', None) is None and not game_logging_of(cmd)[0]:
+            run.log('warning', quiet=quiet, message=FULL_WITHOUT_AI_LOGS)
+        write(run.dir / 'hh-command.json', dict(command=cmd, exe=str(exe), exeSHA256=exe_sha, dll=str(dll),
                                                 dllSHA256=dll_sha, dllReason=dll_reason, database=dbinfo,
                                                 modsDb=str(mods_db) if mods_db else None, noMods=no_mods,
                                                 mods=list(mod_set) if mod_set is not None else None,
                                                 profiles=str(profiles) if profiles else None, fingerprint=fingerprint,
-                                                detail=detail, load=str(save_file) if save_file else None, startTurn=start_turn,
-                                                extras={kind: [dict(name=n, path=str(f), sha256=dbcache.sha256_file(f)) for n, f in files]
+                                                detail=detail, load=str(save_file) if save_file else None, reseed=reseed,
+                                                startTurn=start_turn, extras={kind: [dict(name=n, path=str(f), sha256=dbcache.sha256_file(f)) for n, f in files]
                                                         for kind, files in (('checkpoint', checkpoint_extras), ('final', final_extras))}))
         affinity = int(a.affinity, 0) if isinstance(a.affinity, str) else a.affinity
         cpu_limit = getattr(a, 'cpu_limit', None) or None
@@ -575,6 +667,8 @@ def newgame(a, quiet=False, cfg=None):
             setup['improvedMask'] = {'baseline': 0, 'test': -1}[a.ab_role]
         setup.update(backend='headless', abRole=a.ab_role, diagnosticsLevel=before.get('diagnosticsLevel'),
                      dllSHA256=dll_sha, specKey=seed_key)
+        if reseed:
+            setup['reseed'] = reseed
         write(run.dir / 'setup.json', setup)
         if before.get('diagnosticsSet') is not None:
             run.log('diagnostics_enabled', quiet=quiet, level=before.get('diagnosticsSet'))
@@ -606,6 +700,11 @@ def newgame(a, quiet=False, cfg=None):
                       background=load, diagnosticsLogPrefix=prefixes[-1] if prefixes else None, logsFolder=str((run.dir / 'Logs').resolve()))
         if save_file:
             status.update(loadedFrom=str(save_file), loadWarnings=(ng.get('load') or {}).get('warnings') or [])
+        if reseed:
+            status['reseed'] = reseed
+        if '--sba' in cmd:
+            status['smallBlockAllocator'] = True
+        status['aiLogging'], status['gameLogFlags'] = game_logging_of(cmd)
         if extras:
             status['extras'] = extras
         if saves:
@@ -702,7 +801,7 @@ class Result:
 def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None, db=None, mods_dir=None,
          mods_db=None, mods=None, no_mods=False, loc_db=None, game_dir=None, exe=None, profiles=None, no_profiles=False,
          skip_addins=(), no_addins=False, fingerprint=False, lua_probes=(), checkpoint_extras=(), final_extras=(),
-         heap_perturb=None, frame_skew=None,
+         heap_perturb=None, frame_skew=None, sba=False, ai_logging=None,
          diagnostics=0, improved_mask=None, ab_role=None, checkpoint_every=1, max_seconds=21600, stall_seconds=900,
          max_memory_mb=3500, affinity=None, low_priority=False, cpu_limit=None, efficiency_mode=False, detail=None,
          report=True, prune=False, host_args=(), poll=1.0, quiet=True, load=None, autosave=None, save_at=(), save_final=True):
@@ -713,19 +812,21 @@ def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None,
     turn; autosave: None or 'none' (default), 'game' or a number of turns; save_at: turns to save at; save_final: save
     the last turn (default True); the saves go to <run>/saves;
     run / run_dir: the run folder (<runs>/run, or run_dir; default <runs>/<spec or save stem>-<date>-<time>);
-    cfg: a config.Config (default config.load()); seeds: {'map': M, 'sync': S} over the spec's;
-    mods: the mod set as 'ID[:VER]' strings (a registry is generated; instead of mods_db); no_mods: play without mods;
+    cfg: a config.Config (default config.load()); seeds: {'map': M, 'sync': S} over the spec's, or for a save new seeds
+    (a seed left out stays the save's; docs/saves.md); mods: the mod set as 'ID[:VER]' strings (a registry is generated; instead of mods_db); no_mods: play without mods;
     profiles / no_profiles, skip_addins / no_addins: the host's UI emulation profiles and InGameUIAddins;
     fingerprint: True, or dict(every=K, turns=[...], split=N), runs the Lua fingerprint probe before lua_probes;
     lua_probes: files for the host's --lua-probe; checkpoint_extras, final_extras: Lua files whose results go into
     the checkpoints and extra/NAME.jsonl, and into extra/NAME-final.json (docs/probes.md);
-    heap_perturb, frame_skew: the host options of the same name;
+    heap_perturb, frame_skew, sba: the host options of the same name; ai_logging: 'on' or 'off' (or True or False), default
+    the configuration's, else off (docs/ai-logging.md; a logging option in host_args wins);
     detail: 'summary', 'standard' (default) or 'full', what the run folder keeps (prune=True, the old option, is
     'standard'); report: write report.html; host_args: further host arguments. The other keywords are the c5h run
     options of the same name; anything left None comes from the configuration (the DLL: modsdb.choose_dll). Raises
-    FileExistsError when the run folder already holds a game, ValueError for an unknown detail level or a cpu_limit
-    outside 1-100."""
+    FileExistsError when the run folder already holds a game, ValueError for an unknown detail level or ai_logging, or a
+    cpu_limit outside 1-100."""
     detail = detail_of(detail)
+    ai_logging = config.on_off(ai_logging)
     if cpu_limit is not None and not 1 <= cpu_limit <= 100:
         raise ValueError(f'cpu_limit is a percent of one core, 1 to 100, not {cpu_limit!r}')
     cfg = cfg or config.load()
@@ -750,7 +851,8 @@ def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None,
                         skip_addin=list(skip_addins or []), no_addins=no_addins, fingerprint=fingerprint,
                         lua_probe=list(lua_probes or []), checkpoint_extra=list(checkpoint_extras or []),
                         final_extra=list(final_extras or []),
-                        heap_perturb=heap_perturb, frame_skew=frame_skew, diagnostics=int(diagnostics or 0),
+                        heap_perturb=heap_perturb, frame_skew=frame_skew, sba=bool(sba), ai_logging=ai_logging,
+                        diagnostics=int(diagnostics or 0),
                         improved_mask=improved_mask, ab_role=ab_role, checkpoint_every=int(checkpoint_every or 1),
                         maximum_seconds=max_seconds, stall_seconds=stall_seconds, max_memory_mb=max_memory_mb or None,
                         affinity=affinity, low_priority=low_priority, cpu_limit=cpu_limit,
@@ -773,7 +875,8 @@ def add_arguments(n):
                    help="autoplay to this turn (with --load: a turn after the save's)")
     n.add_argument('--run', help='run name: <runs>/NAME (default <spec stem>-<date>-<time>)')
     n.add_argument('--run-dir', help='run folder (instead of --run)')
-    n.add_argument('--seeds', nargs=2, type=int, metavar=('MAP', 'SYNC'), help="map and sync seeds over the spec's")
+    n.add_argument('--seeds', nargs=2, type=int, metavar=('MAP', 'SYNC'), help="map and sync seeds over the spec's; with "
+                   "a save, new seeds for the game from there on (the map stays the save's)")
     n.add_argument('--dll', help='game DLL (default: config dll)')
     n.add_argument('--db', help='built game database (default: config db, else the cached build from the mods and DLL)')
     n.add_argument('--mods-dir', help='MODS folder or pinned copy, read only (default: config mods_dir)')
@@ -800,6 +903,11 @@ def add_arguments(n):
                    'returns goes into extra/NAME-final.json (repeatable; docs/probes.md)')
     n.add_argument('--heap-perturb', type=int, help='host heap layout perturbation seed (0: off)')
     n.add_argument('--frame-skew', type=int, help='an extra engine update before every K-th one')
+    n.add_argument('--sba', action='store_true', help="a real small-block allocator for the DLL, as the real exe has (long "
+                   'games use a little less CPU; for DLLs that pass trajectory.heap-perturb)')
+    n.add_argument('--ai-logging', choices=['on', 'off'], help="the DLL's AI logs (default: ai_logging in civ5headless.toml, "
+                   'else off): off saves about 30%% of a long Vox Populi game, and there the same seed plays a different game '
+                   'with it on (docs/ai-logging.md)')
     n.add_argument('--diagnostics', type=int, default=0, help='Stacking diagnostics level during autoplay (behaviour runs)')
     n.add_argument('--improved-mask', type=int, default=None, help='A/B: Game.SetStackingAIImprovedMask(N) before arming (DLLs with the switch)')
     n.add_argument('--ab-role', choices=['baseline', 'test'], help='A/B of two DLL builds: record improvedMask 0 or -1 in setup.json')
@@ -815,7 +923,7 @@ def add_arguments(n):
                    '(lower clocks, efficient cores) and idle priority')
     n.add_argument('--detail', choices=DETAILS, help='what the run folder keeps: summary (results, timings, Lua.log, the '
                    'report), standard (default: also per-turn checkpoints, digests and the small logs) or full (also state '
-                   'dumps, the database copies and the DLL\'s AI logs)')
+                   'dumps, the database copies and the DLL\'s logs: its AI logs with --ai-logging on)')
     n.add_argument('--prune', action='store_true', help='the old name of --detail standard')
     n.add_argument('--no-report', dest='report', action='store_false', help='no report.html (c5h report RUN writes it later)')
     n.add_argument('--poll', type=float, default=1.0, help='progress poll interval in seconds')
@@ -841,7 +949,7 @@ def check_args(a, error):
         if a.load: error('give the save as SPEC or as --load, not both')
         a.spec, a.load = None, a.spec
     if bool(a.spec) == bool(a.load): error('give a spec or --load SAVE (one of them)')
-    if a.load and a.seeds: error('--seeds does not apply to --load (the save carries its random state)')
+    if a.load and a.seeds and not all(0 <= s < 2 ** 32 for s in a.seeds): error('--seeds with a save: numbers from 0 to 4294967295')
     try:
         a.autosave = autosave_mode(a.autosave)
     except ValueError as e:

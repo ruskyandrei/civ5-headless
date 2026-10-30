@@ -6,7 +6,8 @@ config.load(path=None) -> Config. The file is the first of: the path given, C5H_
 current folder, civ5headless.toml in the workspace. Every key is optional and top-level (civ5headless.example.toml
 lists them); relative paths are relative to the file's folder, and ~ and %VAR% are expanded. Use forward slashes or
 single-quoted TOML strings for Windows paths. Tables ([verify], ...) are left to the code that reads them
-(Config.raw).
+(Config.raw). ai_logging ("on" or "off") is the one key that is not a path: the AI logging of games that do not choose
+(run.py, docs/ai-logging.md).
 
 Each value has a source:
 - file: from the file;
@@ -82,6 +83,17 @@ class ConfigError(Exception):
     pass
 
 
+def on_off(value, name='ai_logging'):
+    """'on' or 'off' from 'on', 'off', True or False, and None for None; raises ValueError for anything else."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 'on' if value else 'off'
+    if isinstance(value, str) and value.strip().lower() in ('on', 'off'):
+        return value.strip().lower()
+    raise ValueError(f'{name} is on or off, not {value!r}')
+
+
 @dataclass(frozen=True)
 class Source:
     kind: str       # file, discovery, environment, default or unset
@@ -115,6 +127,7 @@ class Config:
     probes: Path | None = None
     toolchain: Path | None = None
     runs: Path | None = None
+    ai_logging: str | None = None                          # on or off for games that do not choose (None: off, run.py)
     file: Path | None = None                               # the civ5headless.toml read, if any
     active_mods: list[Mod] = field(default_factory=list)   # Activated = 1 in mods_db, in activation order
     sources: dict[str, Source] = field(default_factory=dict)
@@ -142,7 +155,7 @@ class Config:
     def to_dict(self):
         return dict(file=str(self.file) if self.file else None,
                     values={k: dict(value=str(v) if v else None, source=s, note=n) for k, v, s, n in self.rows()},
-                    activeMods=[m.__dict__ for m in self.active_mods], notes=list(self.notes))
+                    aiLogging=self.ai_logging, activeMods=[m.__dict__ for m in self.active_mods], notes=list(self.notes))
 
 
 class System:
@@ -388,7 +401,12 @@ def load(path=None, system=None):
     for key, value in cfg.raw.items():
         if isinstance(value, dict):
             continue  # tables belong to other readers
-        if key not in KEYS:
+        if key == 'ai_logging':
+            try:
+                cfg.ai_logging = on_off(value)
+            except ValueError as error:
+                raise ConfigError(f'{cfg.file}: {error}') from None
+        elif key not in KEYS:
             cfg.notes.append(f'unknown key {key!r} in {cfg.file.name}')
         elif not isinstance(value, str):
             cfg.notes.append(f'{key} in {cfg.file.name} is not a string')

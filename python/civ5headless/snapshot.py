@@ -35,9 +35,9 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-from . import config, dbbuild, dbdiff
+from . import config, dbbuild, dbdiff, winproc
 
-FORMAT = 1                      # bump when the build changes, so cached snapshots are rebuilt
+FORMAT = 1                     # bump when the build changes, so cached snapshots are rebuilt
 CORE_DB = 'Civ5CoreDatabase.db'
 SOURCE_EXT = ('.xml', '.sql', '.civ5pkg', '.lua')
 TAGGED_TABLES = ('Civilizations', 'Leaders')
@@ -243,16 +243,19 @@ def cached(cfg, exe=None, dll=None, log=print, force=False):
     if not force and (entry / 'snapshot.db.ok').is_file() and db.is_file():
         return db, info, key
     entry.mkdir(parents=True, exist_ok=True)
-    (entry / 'snapshot.db.ok').unlink(missing_ok=True)
-    (entry / 'inputs.json').write_text(json.dumps(info, indent=1) + '\n', encoding='utf-8')
-    summary = build(game_dir, cfg.user_dir, core, exe, db, dll=dll, log=log)
-    if summary['status'] != 'built':
-        raise RuntimeError(f"DLC snapshot build failed ({summary['status']}); see {summary['run']}")
-    # dbbuild compares this with the installed game to warn about a stale snapshot
-    (entry / 'snapshot.db.dlc.json').write_text(json.dumps(dbbuild.dlc_manifest(Path(game_dir)), indent=1) + '\n',
-                                                encoding='utf-8')
-    (entry / 'snapshot.db.ok').write_text(f"{summary['seconds']}\n", encoding='ascii')
-    log(f"DLC snapshot built in {summary['seconds']:.1f} s: {db}")
+    with winproc.file_lock(entry / 'build.lock', waiting=lambda: log(f'another game is building {db}: waiting for it')):
+        if not force and (entry / 'snapshot.db.ok').is_file() and db.is_file():
+            return db, info, key
+        (entry / 'snapshot.db.ok').unlink(missing_ok=True)
+        (entry / 'inputs.json').write_text(json.dumps(info, indent=1) + '\n', encoding='utf-8')
+        summary = build(game_dir, cfg.user_dir, core, exe, db, dll=dll, log=log)
+        if summary['status'] != 'built':
+            raise RuntimeError(f"DLC snapshot build failed ({summary['status']}); see {summary['run']}")
+        # dbbuild compares this with the installed game to warn about a stale snapshot
+        (entry / 'snapshot.db.dlc.json').write_text(json.dumps(dbbuild.dlc_manifest(Path(game_dir)), indent=1) + '\n',
+                                                    encoding='utf-8')
+        (entry / 'snapshot.db.ok').write_text(f"{summary['seconds']}\n", encoding='ascii')
+        log(f"DLC snapshot built in {summary['seconds']:.1f} s: {db}")
     return db, info, key
 
 

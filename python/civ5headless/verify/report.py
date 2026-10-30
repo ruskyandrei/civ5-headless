@@ -120,7 +120,7 @@ def html(doc):
     # Trajectory
     comps = doc.get('comparisons') or {}
     names = {'real': 'real / host', 'real-aa': 'real A/A', 'aa': 'host A/A', 'skew': 'frame skew', 'perturb': 'heap perturbation',
-             'noprobe': 'probe off', 'standard': 'real / host Standard'}
+             'noprobe': 'probe off', 'reseed-aa': 'a save, the same new seeds', 'standard': 'real / host Standard'}
     rows = [(names[k], comps[k]) for k in names if comps.get(k)]
     if rows:
         parts.append('<h2>Trajectory</h2><div class="legend"><span><i class="sw" style="background:var(--ok)"></i>identical</span>'

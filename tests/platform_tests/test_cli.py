@@ -508,6 +508,15 @@ class CommandTest(unittest.TestCase):
             code, out, _ = call(['fingerprint', 'compare', str(log), str(log)])
             self.assertEqual(code, 0)
             self.assertIn('identical', out)
+            self.assertNotIn('warning', out)
+            # two run folders with different AI logging
+            for name, logged in (('on', True), ('off', False)):
+                (Path(tmp) / name / 'Logs').mkdir(parents=True)
+                (Path(tmp) / name / 'Logs/Lua.log').write_bytes(log.read_bytes())
+                (Path(tmp) / name / 'status.json').write_text(json.dumps(dict(aiLogging=logged)), encoding='utf-8')
+            code, out, _ = call(['fingerprint', 'compare', str(Path(tmp) / 'on'), str(Path(tmp) / 'off')])
+            self.assertEqual(code, 0)
+            self.assertIn('different AI logging', out)
 
     def test_hazards_gets_the_configured_profiles(self):
         seen = []

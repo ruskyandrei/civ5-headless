@@ -101,8 +101,27 @@ std::string HHSha256(const void* pData, size_t uiBytes)
 	return s.Final();
 }
 
+namespace
+{
+	// The files hashed so far, by full lower-case path: a run reads each once (the reports name some of them twice).
+	std::map<std::string, std::string> s_hashes;
+	std::string HashKey(const std::string& strPath)
+	{
+		return HHLower(HHFullPath(strPath));
+	}
+}
+
+void HHSha256Known(const std::string& strPath, const std::string& strHash)
+{
+	s_hashes[HashKey(strPath)] = strHash;
+}
+
 std::string HHSha256File(const std::string& strPath)
 {
+	const std::string key = HashKey(strPath);
+	const std::map<std::string, std::string>::const_iterator it = s_hashes.find(key);
+	if(it != s_hashes.end())
+		return it->second;
 	HANDLE h = CreateFileW(HHWiden(strPath).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
 	if(h == INVALID_HANDLE_VALUE)
 		return std::string();
@@ -112,5 +131,5 @@ std::string HHSha256File(const std::string& strPath)
 	while(ReadFile(h, &buf[0], (DWORD)buf.size(), &n, NULL) && n > 0)
 		s.Update(&buf[0], n);
 	CloseHandle(h);
-	return s.Final();
+	return s_hashes[key] = s.Final();
 }

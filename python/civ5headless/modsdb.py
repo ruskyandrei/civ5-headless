@@ -294,9 +294,12 @@ def cached(cfg, mods, mods_dir=None, log=print):
                 mods=[dict(id=m.id, version=m.version, name=m.name, folder=m.folder.name) for m in ordered])
     if (entry / 'mods.json').is_file() and path.is_file():
         return path, info
-    write(ordered, path, mods_dir)
-    (entry / 'mods.json').write_text(json.dumps(info, indent=1) + '\n', encoding='utf-8')
-    log(f'mods registry generated for {len(ordered)} mods: {path}')
+    entry.mkdir(parents=True, exist_ok=True)
+    with winproc.file_lock(entry / 'build.lock'):
+        if not ((entry / 'mods.json').is_file() and path.is_file()):
+            write(ordered, path, mods_dir)
+            (entry / 'mods.json').write_text(json.dumps(info, indent=1) + '\n', encoding='utf-8')
+            log(f'mods registry generated for {len(ordered)} mods: {path}')
     return path, info
 
 

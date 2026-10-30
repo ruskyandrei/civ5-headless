@@ -72,9 +72,11 @@ extern "C" {
 
 // Stub support for the generated bases in gen/HHStubs.gen.h.
 void HHStubHit(const char* szName);
-void HHImplHit(const char* szName);
+long* HHImplCounter(const char* szName);
 #define HH_STUB_CALL(name) HHStubHit(name)
-#define HH_IMPL_CALL(name) HHImplHit(name)
+// One counter pointer per call site: the first call registers the method, the others only count (the engine calls come
+// by the hundred thousand).
+#define HH_IMPL_CALL(name) do { static long* s_pHHCount = NULL; if(s_pHHCount) ++*s_pHHCount; else s_pHHCount = HHImplCounter(name); } while(0)
 template<class T> T HHStubDefault() { return T(); }
 
 // Host log (Logs/Headless.log and stdout).

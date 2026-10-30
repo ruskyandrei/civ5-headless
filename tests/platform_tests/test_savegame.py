@@ -151,8 +151,8 @@ class OptionTest(unittest.TestCase):
     def test_run_option_checks(self):
         for argv, message in ((['--turns', '3'], 'one of them'),
                               (['spec.json', '--load', 'a.Civ5Save', '--turns', '3'], 'one of them'),
-                              (['--load', 'a.Civ5Save', '--turns', '3', '--seeds', '1', '2'], 'does not apply'),
-                              (['a.Civ5Save', '--turns', '3', '--seeds', '1', '2'], 'does not apply'),
+                              (['--load', 'a.Civ5Save', '--turns', '3', '--seeds', '1', '-2'], 'numbers from 0'),
+                              (['a.Civ5Save', '--turns', '3', '--seeds', str(2 ** 32), '2'], 'numbers from 0'),
                               (['a.Civ5Save', '--load', 'b.Civ5Save', '--turns', '3'], 'not both'),
                               (['spec.json', '--turns', '3', '--autosave', 'often'], 'autosave is none, game'),
                               (['spec.json', '--turns', '3', '--save-at', '0'], 'turn numbers > 0')):
@@ -230,6 +230,204 @@ class LoadTest(unittest.TestCase):
             self.assertIn('must be after it', r.status['error'])
             with self.assertRaises(ValueError):
                 run.play(None, 3, cfg=cfg)
+
+    def game_kit(self, tmp):
+        """A configuration for fake_host.cmd, and an unmodded save of turn 5."""
+        db = tmp / 'game.db'
+        make_db(db)
+        own = tmp / 'Assets/DLC/Expansion2/CvGameCore_Expansion2.dll'
+        own.parent.mkdir(parents=True)
+        own.write_bytes(b'x')
+        cfg = config.Config(game_dir=tmp, mods_dir=make_mods(tmp / 'MODS'), mods_db=tmp / 'game-registry.db',
+                            exe=HERE / 'fake_host.cmd', db=db, runs=tmp / 'runs', db_cache=tmp / 'cache')
+        return cfg, make_save(tmp / 'base.Civ5Save', turn=5)
+
+    def test_new_seeds_for_a_loaded_game(self):
+        """--seeds with a save: the host's --reseed, the seeds in status.json, setup.json and the report, and a save key
+        that groups the same seeds; one seed is a warning, a host without --reseed a clear error."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}):
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+            with mock.patch.object(run, 'host_supports', return_value=True):
+                a = run.play(save, 8, cfg=cfg, run='a', seeds={'map': 11, 'sync': 22}, no_profiles=True)
+                self.assertTrue(a.ok, a.status.get('error'))
+                argv = json.loads((a.dir / 'argv.json').read_text(encoding='utf-8'))[1:]
+                self.assertEqual(argv[:5], ['loadgame', '--load', str(save.resolve()), '--reseed', '11:22'])
+                self.assertEqual(a.status['reseed'], {'map': 11, 'sync': 22})
+                self.assertEqual(json.loads((a.dir / 'setup.json').read_text(encoding='utf-8'))['reseed'], {'map': 11, 'sync': 22})
+                self.assertEqual(json.loads((a.dir / 'hh-command.json').read_text(encoding='utf-8'))['reseed'], {'map': 11, 'sync': 22})
+                self.assertRegex(a.status['save'], r'^loaded-base-t5-[0-9a-f]{8}-m11-s22$')
+                self.assertIn('map 11, sync 22 (new, over the save)', (a.dir / 'report.html').read_text(encoding='utf-8'))
+                events = [json.loads(l) for l in (a.dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+                self.assertFalse([e for e in events if e['action'] == 'warning' and 'one new seed' in e['message']])
+                # the same seeds, the same key; none: the save's key, nothing passed
+                again = run.play(save, 8, cfg=cfg, run='a2', seeds={'map': 11, 'sync': 22}, no_profiles=True, report=False)
+                self.assertEqual(again.status['save'], a.status['save'])
+                kept = run.play(save, 8, cfg=cfg, run='kept', no_profiles=True, report=False)
+                self.assertNotIn('--reseed', json.loads((kept.dir / 'argv.json').read_text(encoding='utf-8')))
+                self.assertNotIn('reseed', kept.status)
+                self.assertRegex(kept.status['save'], r'^loaded-base-t5-[0-9a-f]{8}$')
+                # one seed: the other side empty, and a warning
+                sync = run.play(save, 8, cfg=cfg, run='sync', seeds={'sync': 22}, no_profiles=True, report=False)
+                self.assertTrue(sync.ok, sync.status.get('error'))
+                self.assertIn(':22', json.loads((sync.dir / 'argv.json').read_text(encoding='utf-8')))
+                self.assertRegex(sync.status['save'], r'-s22$')
+                events = [json.loads(l) for l in (sync.dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+                self.assertTrue([e for e in events if e['action'] == 'warning' and 'one new seed' in e['message']])
+                # seeds that cannot be seeds fail the game before the host starts
+                bad = run.play(save, 8, cfg=cfg, run='bad', seeds={'map': -1, 'sync': 22}, no_profiles=True, report=False)
+                self.assertFalse(bad.ok)
+                self.assertIn('the map seed is a number', bad.status['error'])
+            with mock.patch.object(run, 'host_supports', side_effect=lambda exe, option: option != '--reseed'):
+                old = run.play(save, 8, cfg=cfg, run='old', seeds={'map': 11, 'sync': 22}, no_profiles=True, report=False)
+                self.assertFalse(old.ok)
+                self.assertIn('no --reseed', old.status['error'])
+                self.assertFalse((old.dir / 'argv.json').exists())
+
+    def test_queue_seeds_on_a_load(self):
+        """seeds x variants over one save: each game has its own seeds (they used to be dropped, leaving copies)."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}), \
+                mock.patch.object(run, 'host_supports', return_value=True), contextlib.redirect_stdout(io.StringIO()) as out:
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+            qpath = tmp / 'q.json'
+            qpath.write_text(json.dumps({
+                'out': 'runs/q', 'workers': 2, 'affinity': 'none',
+                'defaults': {'load': save.name, 'turns': 7, 'noProfiles': True, 'report': False},
+                'variants': {'A': {'abRole': 'baseline'}, 'B': {'abRole': 'test', 'smallBlockAllocator': True}},
+                'seeds': [[1, 2], [3, 4]],
+                'jobs': [{'name': 'sync-only', 'seeds': {'sync': 9}}]}), encoding='utf-8')
+            self.assertEqual(queue.main(['run', str(qpath)], cfg), 0)
+            status = {p.name: json.loads((p / 'status.json').read_text(encoding='utf-8')) for p in (tmp / 'runs/q').iterdir() if p.is_dir()}
+            self.assertEqual(sorted(status), ['A-m1-s2', 'A-m3-s4', 'B-m1-s2', 'B-m3-s4', 'sync-only'])
+            self.assertEqual(status['B-m3-s4']['reseed'], {'map': 3, 'sync': 4})
+            self.assertEqual(status['A-m1-s2']['save'], status['B-m1-s2']['save'])  # abcompare pairs them
+            self.assertNotEqual(status['A-m1-s2']['save'], status['A-m3-s4']['save'])
+            self.assertTrue(status['B-m1-s2']['smallBlockAllocator'])
+            self.assertNotIn('smallBlockAllocator', status['A-m1-s2'])
+            argv = json.loads((tmp / 'runs/q/B-m3-s4/argv.json').read_text(encoding='utf-8'))
+            self.assertEqual(argv[argv.index('--reseed') + 1], '3:4')
+            self.assertIn('--sba', argv)
+            self.assertIn('sync-only: only one new seed', out.getvalue())
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            make_save(tmp / 'a.Civ5Save')
+            with self.assertRaises(SystemExit) as caught:
+                queue.expand({'jobs': [{'name': 'x', 'load': 'a.Civ5Save', 'noMods': True, 'seeds': {'map': 'one'}}]}, tmp / 'q.json')
+            self.assertIn('job x: the map seed is a number', str(caught.exception))
+
+    def test_small_block_allocator_and_known_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}):
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+            with mock.patch.object(run, 'host_supports', return_value=True):
+                r = run.play(save, 7, cfg=cfg, run='sba', sba=True, no_profiles=True)
+            self.assertTrue(r.ok, r.status.get('error'))
+            argv = json.loads((r.dir / 'argv.json').read_text(encoding='utf-8'))[1:]
+            self.assertIn('--sba', argv)
+            self.assertTrue(r.status['smallBlockAllocator'])
+            self.assertIn('small-block allocator', (r.dir / 'report.html').read_text(encoding='utf-8'))
+            command = json.loads((r.dir / 'hh-command.json').read_text(encoding='utf-8'))
+            known = [argv[i + 1] for i, a in enumerate(argv) if a == '--known-sha256']
+            self.assertEqual(known, [f"{command['exe']}={command['exeSHA256']}", f"{command['dll']}={command['dllSHA256']}"])
+            # off by default, and not for a host that cannot do them
+            with mock.patch.object(run, 'host_supports', side_effect=lambda exe, option: option not in ('--sba', '--known-sha256')):
+                plain = run.play(save, 7, cfg=cfg, run='plain', no_profiles=True, report=False)
+                self.assertTrue(plain.ok, plain.status.get('error'))
+                argv = json.loads((plain.dir / 'argv.json').read_text(encoding='utf-8'))[1:]
+                self.assertFalse({'--sba', '--known-sha256'} & set(argv))
+                self.assertNotIn('smallBlockAllocator', plain.status)
+                old = run.play(save, 7, cfg=cfg, run='old', sba=True, no_profiles=True, report=False)
+                self.assertFalse(old.ok)
+                self.assertIn('no --sba', old.status['error'])
+
+    def test_ai_logging(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}), \
+                mock.patch.object(run, 'host_supports', return_value=True), contextlib.redirect_stdout(io.StringIO()):
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+
+            def flags(r):
+                self.assertTrue(r.ok, r.status.get('error'))
+                argv = json.loads((r.dir / 'argv.json').read_text(encoding='utf-8'))
+                return [argv[i + 1] for i, a in enumerate(argv) if a == '--game-log-flags'], r.status['aiLogging'], r.status['gameLogFlags']
+
+            def play(name, **kw):
+                return run.play(save, 7, cfg=cfg, run=name, no_profiles=True, **kw)
+
+            # off by default, which the status and the report record
+            plain = play('plain')
+            self.assertEqual(flags(plain), (['0'], False, 0))
+            self.assertIn('AI logging off', (plain.dir / 'report.html').read_text(encoding='utf-8'))
+            self.assertEqual(flags(play('off', ai_logging='off')), (['0'], False, 0))
+            self.assertEqual(flags(play('false', ai_logging=False)), (['0'], False, 0))
+            on = play('on', ai_logging='on')
+            self.assertEqual(flags(on), (['15'], True, 15))
+            self.assertIn('AI logging on', (on.dir / 'report.html').read_text(encoding='utf-8'))
+            # a logging option in the host arguments wins, and the status says what the game played with
+            self.assertEqual(flags(play('arg', ai_logging='off', host_args=['--game-log-flags', '5'])), (['5'], True, 5))
+            self.assertEqual(flags(play('none', ai_logging='on', host_args=['--no-game-logging'])), ([], False, 0))
+            self.assertEqual(flags(play('all', host_args=['--game-logging'])), ([], True, 15))
+            # the command line
+            self.assertEqual(run.main([str(save), '--turns', '7', '--run', 'cli', '--no-profiles', '--ai-logging', 'on'], cfg), 0)
+            self.assertTrue(json.loads((tmp / 'runs/cli/status.json').read_text(encoding='utf-8'))['aiLogging'])
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                run.main([str(save), '--turns', '7', '--run', 'bad', '--ai-logging', 'maybe'], cfg)
+            with self.assertRaisesRegex(ValueError, 'ai_logging is on or off'):
+                play('bad', ai_logging='maybe')
+            # the configuration, for games that do not choose
+            cfg.ai_logging = 'on'
+            self.assertEqual(flags(play('config')), (['15'], True, 15))
+            self.assertEqual(flags(play('config-off', ai_logging='off')), (['0'], False, 0))
+            cfg.ai_logging = 'off'
+            self.assertEqual(flags(play('config-on', ai_logging='on')), (['15'], True, 15))
+            cfg.ai_logging = None
+            # --detail full without AI logs says so, unless the game chose that
+            full = play('full', detail='full')
+            self.assertEqual(flags(full), (['0'], False, 0))
+            self.assertIn('--detail full keeps no AI logs', (full.dir / 'events.jsonl').read_text(encoding='utf-8'))
+            for name, kw in (('full-on', dict(ai_logging='on')), ('full-off', dict(ai_logging='off'))):
+                self.assertNotIn('keeps no AI logs', (play(name, detail='full', **kw).dir / 'events.jsonl').read_text(encoding='utf-8'))
+            # a host without the option cannot turn it off, and plays with its own default unless asked to
+            with mock.patch.object(run, 'host_supports', side_effect=lambda exe, option: option != '--game-log-flags'):
+                old = play('old', ai_logging='off', report=False)
+                self.assertFalse(old.ok)
+                self.assertIn('no --game-log-flags', old.status['error'])
+                self.assertEqual(flags(play('old-on', ai_logging='on', report=False)), ([], True, 15))
+                self.assertEqual(flags(play('old-default', report=False)), ([], True, 15))
+
+    def test_ai_logging_in_a_queue(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}), \
+                mock.patch.object(run, 'host_supports', return_value=True), contextlib.redirect_stdout(io.StringIO()):
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+            qpath = tmp / 'q.json'
+            qpath.write_text(json.dumps({
+                'out': 'runs/q', 'workers': 2, 'affinity': 'none',
+                'defaults': {'load': save.name, 'turns': 7, 'noProfiles': True, 'report': False},
+                'jobs': [{'name': 'default'}, {'name': 'on', 'aiLogging': 'on'}, {'name': 'bool', 'aiLogging': True},
+                         {'name': 'arg', 'hostArgs': ['--game-log-flags', '1']}]}), encoding='utf-8')
+            self.assertEqual(queue.main(['run', str(qpath)], cfg), 0)
+            status = {p.name: json.loads((p / 'status.json').read_text(encoding='utf-8')) for p in (tmp / 'runs/q').iterdir() if p.is_dir()}
+            self.assertEqual({k: (v['aiLogging'], v['gameLogFlags']) for k, v in status.items()},
+                             {'default': (False, 0), 'on': (True, 15), 'bool': (True, 15), 'arg': (True, 1)})
+            with self.assertRaises(SystemExit) as caught:
+                queue.expand({'jobs': [{'name': 'x', 'load': save.name, 'noMods': True, 'aiLogging': 'maybe'}]}, tmp / 'q.json', cfg)
+            self.assertIn('job x: aiLogging is on or off', str(caught.exception))
+            # queue compare says so when two games of a seed differ in it
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                queue.main(['compare', str(qpath)], cfg)
+            self.assertIn('different AI logging: default off, on on', out.getvalue())
+            compared = json.loads(qpath.with_suffix('.compare.json').read_text(encoding='utf-8'))
+            self.assertEqual({r['b']: r['aiLogging'] for r in compared},
+                             {'on': [False, True], 'bool': [False, True], 'arg': [False, True]})
+
+    def test_game_logging_of_a_command(self):
+        for cmd, want in ((['x'], (True, 15)), (['--game-log-flags', '0'], (False, 0)), (['--game-log-flags', '14'], (False, 14)),
+                          (['--game-log-flags', '0', '--game-log-flags', '1'], (True, 1)), (['--game-log-flags', 'junk'], (False, 0)),
+                          (['--no-game-logging'], (False, 0)), (['--no-game-logging', '--game-log-flags', '15'], (False, 0)),
+                          (['--no-game-logging', '--game-logging'], (True, 15))):
+            self.assertEqual(run.game_logging_of(cmd), want, cmd)
 
 
 if __name__ == '__main__':

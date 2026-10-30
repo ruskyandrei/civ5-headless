@@ -1223,6 +1223,9 @@ bool HHRunAutoplay(HHNewGameInterfaces& kIf, HHNewGameResult& kResult, int nTurn
 	int iTurnUpdates = 0;
 	int iIdle = -1;
 	const int kMaxUpdatesPerTurn = 2000;
+	// A game loaded from a save of an ended game is in extended play (CvGame's Read makes GAMESTATE_OVER that), and plays on:
+	// autoplay stops when the state changes.
+	const int iStartState = (int)kIf.pGame->GetGameState();
 	for(;;)
 	{
 		// --frame-skew K: one extra Update (an engine frame without the UI frame) before every K-th one, so the
@@ -1263,7 +1266,7 @@ bool HHRunAutoplay(HHNewGameInterfaces& kIf, HHNewGameResult& kResult, int nTurn
 			if(!o.checkpointLua.empty() && o.checkpointEvery > 0 && iNow % o.checkpointEvery == 0)
 				WriteCheckpoint(kScripts, iNow, "", tTurn - tStart);
 		}
-		if(kIf.pGame->GetGameState() != GAMESTATE_ON)
+		if((int)kIf.pGame->GetGameState() != iStartState)
 		{
 			HHLog("game state %d at turn %d", (int)kIf.pGame->GetGameState(), iNow);
 			break;
