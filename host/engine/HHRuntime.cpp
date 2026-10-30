@@ -251,9 +251,11 @@ void HHStubHit(const char* szName)
 	Hit(szName, true);
 }
 
-void HHImplHit(const char* szName)
+long* HHImplCounter(const char* szName)
 {
 	Hit(szName, false);
+	HHScoped lock(s_callLock);
+	return &s_calls[szName].count;  // a map's entries stay where they are
 }
 
 std::vector<HHCallRecord> HHGetCallRecords()

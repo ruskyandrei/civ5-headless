@@ -7,9 +7,9 @@
 //   GetSmallObjectAllocator once; it then calls GetSmallObjectAllocator(false) and uses the
 //   small-block allocator only if that returns non-NULL. Every allocation then calls
 //   FSBAAllocate (NULL means "use malloc") and every free calls FSBADeallocate (false means
-//   "use free"). The host's allocator is "disabled": a non-NULL dummy instance so the
+//   "use free"). By default the host's allocator is "disabled": a non-NULL dummy instance so the
 //   binding completes once, FSBAAllocate always NULL, FSBADeallocate always false, so all DLL
-//   memory comes from the shared MSVCR90 heap.
+//   memory comes from the shared MSVCR90 heap. --sba makes it a real one (below).
 // - GetTempHeap returns a TempHeap whose members the DLL's own (inlined/linked) TempHeap
 //   code reads directly: lock at +0x00 (16-byte aligned), m_pMemHead +0x10,
 //   m_uiCurrentOffset +0x14, m_uiCapacity +0x18, m_dwFlags +0x1c. Allocate bumps the offset
@@ -68,12 +68,12 @@ namespace
 		"??4_Init_locks@std@@QAEAAV01@ABV01@@Z",
 	};
 
-	volatile LONG s_alExportCounts[NUM_EXPORTS];
+	LONG s_alExportCounts[NUM_EXPORTS];
 	const char* s_aszExportPhase[NUM_EXPORTS];
 
 	inline void ExportHit(ExportId eId)
 	{
-		if(InterlockedIncrement(&s_alExportCounts[eId]) == 1)
+		if(++s_alExportCounts[eId] == 1)  // the host has one thread, and a lost count would only be a count
 		{
 			s_aszExportPhase[eId] = HHGetPhase();
 			HHLog("export first call: %s (phase %s)", s_aszExportNames[eId], HHGetPhase());
@@ -164,6 +164,65 @@ namespace
 		LeaveCriticalSection(&s_csPerturb);
 	}
 	volatile LONG s_lSBAPreventCreation = 0;
+
+	// --sba: a real small-block allocator, as the real exe has one: size classes in 16-byte steps up to 512 bytes, 64 KB
+	// pages out of one reserved range, LIFO free lists. A page belongs to one size class for good. When the range is used
+	// up, or could not be reserved, FSBAAllocate answers NULL and the blocks come from the CRT heap, as without --sba.
+	const size_t kSbaMax = 512, kSbaStep = 16, kSbaPage = 65536, kSbaReserve = 640u * 1024 * 1024;
+	struct SbaNode { SbaNode* pNext; };
+	SbaNode* s_apSbaFree[kSbaMax / kSbaStep + 1];
+	BYTE* s_apSbaCur[kSbaMax / kSbaStep + 1];
+	BYTE* s_apSbaEnd[kSbaMax / kSbaStep + 1];
+	BYTE s_aSbaClass[kSbaReserve / kSbaPage];
+	BYTE* s_pSbaBase = NULL;
+	BYTE* s_pSbaNext = NULL;
+	volatile LONG s_lSbaLock = 0;
+	inline void SbaLock() { while(InterlockedExchange(&s_lSbaLock, 1)) YieldProcessor(); }
+	inline void SbaUnlock() { s_lSbaLock = 0; }
+	inline bool SbaOwns(void* p) { return s_pSbaBase && (BYTE*)p >= s_pSbaBase && (BYTE*)p < s_pSbaBase + kSbaReserve; }
+	void* SbaAllocate(size_t nSize)
+	{
+		if(nSize > kSbaMax)
+			return NULL;
+		const size_t k = nSize ? (nSize + kSbaStep - 1) / kSbaStep : 1;
+		void* p = NULL;
+		SbaLock();
+		if(SbaNode* pNode = s_apSbaFree[k])
+		{
+			s_apSbaFree[k] = pNode->pNext;
+			p = pNode;
+		}
+		else
+		{
+			if(s_apSbaCur[k] == s_apSbaEnd[k] && s_pSbaNext < s_pSbaBase + kSbaReserve &&
+			   VirtualAlloc(s_pSbaNext, kSbaPage, MEM_COMMIT, PAGE_READWRITE))
+			{
+				s_aSbaClass[(s_pSbaNext - s_pSbaBase) / kSbaPage] = (BYTE)k;
+				s_apSbaCur[k] = s_pSbaNext;
+				s_apSbaEnd[k] = s_pSbaNext + kSbaPage / (k * kSbaStep) * (k * kSbaStep);
+				s_pSbaNext += kSbaPage;
+			}
+			if(s_apSbaCur[k] != s_apSbaEnd[k])
+			{
+				p = s_apSbaCur[k];
+				s_apSbaCur[k] += k * kSbaStep;
+			}
+		}
+		SbaUnlock();
+		return p;
+	}
+	bool SbaFree(void* p)
+	{
+		if(!SbaOwns(p))
+			return false;
+		const size_t k = s_aSbaClass[((BYTE*)p - s_pSbaBase) / kSbaPage];
+		SbaLock();
+		SbaNode* pNode = (SbaNode*)p;
+		pNode->pNext = s_apSbaFree[k];
+		s_apSbaFree[k] = pNode;
+		SbaUnlock();
+		return true;
+	}
 }
 
 void HHExportsInit()
@@ -173,6 +232,16 @@ void HHExportsInit()
 	s_tempHeap.uiCapacity = s_tempHeap.pMemHead ? kTempHeapBytes : 0;
 	memset(&s_stringAInit, 0, sizeof(s_stringAInit));
 	memset(&s_stringWInit, 0, sizeof(s_stringWInit));
+	if(HHGetOptions().sba && !s_pSbaBase)
+	{
+		s_pSbaBase = (BYTE*)VirtualAlloc(NULL, kSbaReserve, MEM_RESERVE, PAGE_READWRITE);
+		s_pSbaNext = s_pSbaBase;
+		if(s_pSbaBase)
+			HHLog("small-block allocator on: blocks up to %u bytes", (unsigned)kSbaMax);
+		else
+			HHLogError("small-block allocator: cannot reserve %u MB (error %lu); every block comes from the CRT heap",
+			           (unsigned)(kSbaReserve / (1024 * 1024)), GetLastError());
+	}
 	const unsigned int uSeed = HHGetOptions().heapPerturb;
 	if(uSeed && !s_bPerturb)
 	{
@@ -243,7 +312,8 @@ extern "C"
 		UnusedExportHit(EX_FJobSetWaitImpl);
 	}
 
-	// Small-block allocator: disabled, every request falls back to the CRT heap.
+	// Small-block allocator: disabled unless --sba, every request falls back to the CRT heap. FSBAIsDisabled says disabled
+	// either way: FireWorks asks FSBAAllocate all the same, and the games with --sba were checked with that answer.
 	FSmallObjectAllocator* __cdecl GetSmallObjectAllocator(bool bCreate)
 	{
 		UNUSED_VARIABLE(bCreate);
@@ -257,17 +327,15 @@ extern "C"
 	}
 	void* __cdecl FSBAAllocate(size_t nSize)
 	{
-		UNUSED_VARIABLE(nSize);
 		ExportHit(EX_FSBAAllocate);
 		if(s_bPerturb)
 			PerturbStep();
-		return NULL;
+		return s_pSbaBase ? SbaAllocate(nSize) : NULL;
 	}
 	bool __cdecl FSBADeallocate(void* pBlock)
 	{
-		UNUSED_VARIABLE(pBlock);
 		ExportHit(EX_FSBADeallocate);
-		return false;
+		return SbaFree(pBlock);
 	}
 	void __cdecl FSBADisable(bool bState)
 	{
@@ -282,20 +350,21 @@ extern "C"
 	}
 	bool __cdecl FSBAIsSmallBlock(void* pBlock, size_t& stSize)
 	{
-		UNUSED_VARIABLE(pBlock); UNUSED_VARIABLE(stSize);
 		ExportHit(EX_FSBAIsSmallBlock);
-		return false;
+		if(!SbaOwns(pBlock))
+			return false;
+		stSize = (size_t)s_aSbaClass[((BYTE*)pBlock - s_pSbaBase) / kSbaPage] * kSbaStep;
+		return true;
 	}
 	bool __cdecl FSBAHasAllocatorForSize(size_t tSize)
 	{
-		UNUSED_VARIABLE(tSize);
 		ExportHit(EX_FSBAHasAllocatorForSize);
-		return false;
+		return s_pSbaBase && tSize <= kSbaMax;
 	}
 	size_t __cdecl FSBAGetMaxAllocatorSize()
 	{
 		ExportHit(EX_FSBAGetMaxAllocatorSize);
-		return 0;
+		return s_pSbaBase ? kSbaMax : 0;
 	}
 	bool __cdecl FSBAPreventCreation(bool bState)
 	{

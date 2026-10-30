@@ -25,6 +25,7 @@ namespace
 		{ "ICvEngineUtility1::NotifyAILeadersInGame", "leader scene assets" },
 		{ "ICvEngineUtility1::NotifySpecificAILeaderInGame", "leader scene assets" },
 		{ "ICvEngineUtility3::FlushTurnReminders", "UI turn reminders" },
+		{ "ICvEngineUtility1::getAssignedNetworkID", "CvPlayer::Read of a loaded game: the DLL only stores the player's net ID in the pregame, for network games" },
 		{ "ICvEngineUtility1::stripSpecialCharacters", "formats a display string in place; names stay as given (M5 parity)" },
 		{ "ICvEngineUtility1::GetAdvisorBadAttackInterrupt", "advisor interrupt user setting, off (M5 parity)" },
 		{ "ICvEngineUtility1::GetAdvisorCityAttackInterrupt", "advisor interrupt user setting, off (M5 parity)" },

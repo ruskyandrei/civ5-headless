@@ -55,6 +55,8 @@ namespace
 		"  --spec <path>        resolved game spec (python work/headless/gamespec.py resolve SPEC --out FILE)\n"
 		"  --load <path>        loadgame: the saved game to continue (the real game's or the host's .Civ5Save); the activated\n"
 		"                       mods and the DLL must be the save's (c5h run --load sets them up)\n"
+		"  --reseed <map:sync>  loadgame: new seeds after the load (either side may be empty: the save's stays); the map is\n"
+		"                       the save's, what is rolled from here on changes. VP rolls from the map seed (docs/saves.md)\n"
 		"  --autosave <mode>    none (default), game (the game's own setting: UserSettings.ini TurnsBetweenAutosave) or n\n"
 		"                       (every n turns): saves at the engine's autosave points, named as the game names them, in\n"
 		"                       <save dir>\\auto; all are kept (as the real game keeps them in autoplay)\n"
@@ -107,6 +109,9 @@ namespace
 		"  --crt-sse2 <0|1>     _set_SSE2_enable in every loaded MSVCR90 instance (experiment)\n"
 		"  --heap-perturb <seed> address-perturbation self-test (results must not change): random heap spacer\n"
 		"                       allocations interleaved with the DLL's allocations, and the game DLL rebased\n"
+		"  --sba                a real small-block allocator behind FSBAAllocate (blocks up to 512 bytes), as the real\n"
+		"                       exe has; off: every block from the CRT heap. Long games use a little less CPU\n"
+		"  --known-sha256 <path=hex>  this file's SHA-256 for the reports, so the host need not read it (repeatable)\n"
 		"  --profiles <dir>     newgame: UI emulation profiles (default: profiles\\ next to the exe or above it)\n"
 		"  --no-profiles        newgame: no UI emulation profiles\n"
 		"  --skip-addin <file>  newgame: do not run this InGameUIAddin (file name, with or without extension; repeatable)\n"
@@ -322,6 +327,40 @@ namespace
 		return true;
 	}
 
+	// --reseed map:sync, a seed being a number that fits an unsigned int or empty (the save's).
+	bool ParseSeed(const std::string& v, __int64& iSeed)
+	{
+		iSeed = -1;
+		if(v.empty())
+			return true;
+		char* end = NULL;
+		const __int64 n = _strtoi64(v.c_str(), &end, 10);
+		if(*end || n < 0 || n > 0xFFFFFFFFLL)
+			return false;
+		iSeed = n;
+		return true;
+	}
+
+	bool ParseReseed(const std::string& v, HHOptions& o)
+	{
+		const size_t colon = v.find(':');
+		return colon != std::string::npos && ParseSeed(v.substr(0, colon), o.reseedMap) && ParseSeed(v.substr(colon + 1), o.reseedSync) &&
+			(o.reseedMap >= 0 || o.reseedSync >= 0);
+	}
+
+	// --known-sha256 path=hex: the path can hold an equals sign, the hash cannot.
+	bool ParseKnownHash(const std::string& v)
+	{
+		const size_t eq = v.rfind('=');
+		if(eq == std::string::npos || eq == 0 || v.size() - eq - 1 != 64)
+			return false;
+		const std::string hex = v.substr(eq + 1);
+		if(hex.find_first_not_of("0123456789ABCDEF") != std::string::npos)
+			return false;
+		HHSha256Known(v.substr(0, eq), hex);
+		return true;
+	}
+
 	bool ParseArgs(int argc, wchar_t** argv, HHOptions& o)
 	{
 		if(argc < 2)
@@ -343,10 +382,29 @@ namespace
 			else if(a == "--no-profiles") o.noProfiles = true;
 			else if(a == "--no-addins") o.noAddins = true;
 			else if(a == "--no-dumps") o.noDumps = true;
+			else if(a == "--sba") o.sba = true;
 			else if(a == "--save-final") o.saveFinal = true;
 			else if(a == "--no-save-final") o.saveFinal = false;
 			else if(!bHasValue) { fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
 			else if(a == "--load") { o.loadPath = v; ++i; }
+			else if(a == "--reseed")
+			{
+				if(!ParseReseed(v, o))
+				{
+					fprintf(stderr, "--reseed takes map:sync, numbers below 2^32 of which one may be empty, not %s\n", v.c_str());
+					return false;
+				}
+				++i;
+			}
+			else if(a == "--known-sha256")
+			{
+				if(!ParseKnownHash(v))
+				{
+					fprintf(stderr, "--known-sha256 takes path=hex, 64 upper-case hex digits, not %s\n", v.c_str());
+					return false;
+				}
+				++i;
+			}
 			else if(a == "--save-at") { o.saveAt.push_back(atoi(v.c_str())); ++i; }
 			else if(a == "--autosave")
 			{
@@ -425,6 +483,11 @@ namespace
 			if(o.command == "loadgame" && o.loadPath.empty())
 			{
 				fprintf(stderr, "loadgame needs --load\n");
+				return false;
+			}
+			if(o.command != "loadgame" && (o.reseedMap >= 0 || o.reseedSync >= 0))
+			{
+				fprintf(stderr, "--reseed is for loadgame; a new game takes its seeds from the spec\n");
 				return false;
 			}
 			if(!o.specPath.empty())
@@ -570,8 +633,14 @@ namespace
 				HHJsonEscape(h.mods[i].name) + "\"}";
 		for(size_t i = 0; i < pLoad->warnings.size(); ++i)
 			warnings += std::string(i ? ", " : "") + "\"" + HHJsonEscape(pLoad->warnings[i]) + "\"";
+		// The seeds after the load, null for one the save kept.
+		const std::string reseed = !pLoad->bReseeded ? "null" :
+			"{\"map\": " + (pLoad->reseedMap >= 0 ? HHFormat("%I64d", pLoad->reseedMap) : std::string("null")) +
+			", \"sync\": " + (pLoad->reseedSync >= 0 ? HHFormat("%I64d", pLoad->reseedSync) : std::string("null")) +
+			(pLoad->reseedSync >= 0 ? HHFormat(", \"rngBefore\": %I64u, \"rngAfter\": %I64u", pLoad->rngBefore, pLoad->rngAfter) : std::string()) + "}";
 		return "{\"path\": \"" + HHJsonEscape(pLoad->path) + HHFormat("\", \"turn\": %d, \"bodyBytes\": %u, \"seconds\": %.3f, ", h.turn, pLoad->bodyBytes,
 		                                                               pLoad->seconds) +
+			"\"reseed\": " + reseed + ", " +
 			"\"civilization\": \"" + HHJsonEscape(h.civilization) + "\", \"handicap\": \"" + HHJsonEscape(h.handicap) + "\", \"gameSpeed\": \"" +
 			HHJsonEscape(h.gameSpeed) + "\", \"worldSize\": \"" + HHJsonEscape(h.worldSize) + "\", \"mapScript\": \"" + HHJsonEscape(h.mapScript) +
 			"\", \"gameVersion\": \"" + HHJsonEscape(h.gameVersion) + "\", \"dllGuid\": \"" + HHGuidString(h.dllGuid) + "\", \"dllVersion\": \"" +
@@ -792,9 +861,9 @@ namespace
 		r += "  \"spec\": " + Q(o.specPath) + ",\n";
 		r += "  \"load\": " + LoadJson() + ",\n";
 		r += "  \"saves\": " + SavesJson("    ") + ",\n";
-		r += HHFormat("  \"options\": {\"turns\": %d, \"heapPerturb\": %u, \"frameSkew\": %d, \"noUiFrame\": %s, \"gameLogging\": %s, \"gameLogFlags\": %d, "
+		r += HHFormat("  \"options\": {\"turns\": %d, \"heapPerturb\": %u, \"frameSkew\": %d, \"smallBlockAllocator\": %s, \"noUiFrame\": %s, \"gameLogging\": %s, \"gameLogFlags\": %d, "
 		              "\"idleUpdates\": %d, \"noMods\": %s, \"noProfiles\": %s, \"noAddins\": %s, \"skipAddins\": [",
-		              o.turns, o.heapPerturb, o.frameSkew, o.noUiFrame ? "true" : "false", o.gameLogging ? "true" : "false", o.gameLogFlags,
+		              o.turns, o.heapPerturb, o.frameSkew, o.sba ? "true" : "false", o.noUiFrame ? "true" : "false", o.gameLogging ? "true" : "false", o.gameLogFlags,
 		              o.idleUpdates, o.noMods ? "true" : "false", o.noProfiles ? "true" : "false", o.noAddins ? "true" : "false");
 		for(size_t i = 0; i < o.skipAddins.size(); ++i)
 			r += (i ? ", " : "") + Q(o.skipAddins[i]);

@@ -866,6 +866,34 @@ bool HHLoadSavedGame(const std::string& strPath, HHNewGameInterfaces& kIf, HHNew
 		return false;
 	}
 	kResult.timings.push_back(std::make_pair(std::string("load_read_game"), HHSeconds() - t0));
+	if(kIf.pGame->GetGameState() != GAMESTATE_ON)
+	{
+		// The stock DLL ends a game when its active player is dead and autoplay is over, which every autoplayed game's final
+		// save shows. Such a game plays on, but no victory can end it any more.
+		s_load.warnings.push_back("the save's game had ended, so it plays on in extended play, where no victory can end it; a --save-at save from before the last turn does not have this");
+		HHLog("warning: %s", s_load.warnings.back().c_str());
+	}
+
+	// --reseed: new seeds for the loaded game. The map itself is in the save, so this changes only what is rolled from here
+	// on. Vox Populi's stateless rolls (CvGame::randCore) hash the pregame's map seed; the game's generator (the DLL's
+	// jonRand) takes the sync seed reduced as CvGame::init reduces it. The map generator cannot be reached and keeps the
+	// save's state; after the map is made, the DLL hardly draws on it. The run's later saves carry the new seeds.
+	const HHOptions& kOptions = HHGetOptions();
+	if(kOptions.reseedMap >= 0)
+		HH_STEP(HHFormat("setMapRandomSeed(%I64d)", kOptions.reseedMap), pg->setMapRandomSeed((unsigned int)kOptions.reseedMap));
+	if(kOptions.reseedSync >= 0)
+	{
+		HH_STEP(HHFormat("setSyncRandomSeed(%I64d)", kOptions.reseedSync), pg->setSyncRandomSeed((unsigned int)kOptions.reseedSync));
+		ICvRandom1* pRandom = kIf.pGame->GetRandomNumberGenerator();
+		s_load.rngBefore = pRandom->GetSeed();
+		HH_STEP(HHFormat("Game.GetRandomNumberGenerator().Reset(%I64d)", kOptions.reseedSync % 52319761), pRandom->Reset((unsigned long)(kOptions.reseedSync % 52319761)));
+		s_load.rngAfter = pRandom->GetSeed();
+		pRandom->Destroy();
+		HHLog("reseed: the game generator's seed was %I64u, is %I64u", s_load.rngBefore, s_load.rngAfter);
+	}
+	s_load.bReseeded = kOptions.reseedMap >= 0 || kOptions.reseedSync >= 0;
+	s_load.reseedMap = kOptions.reseedMap;
+	s_load.reseedSync = kOptions.reseedSync;
 
 	// D. The rest of the start as for a new game (setup/HHNewGame.h HHGameStartedSteps).
 	t0 = HHSeconds();

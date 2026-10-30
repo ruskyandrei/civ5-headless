@@ -101,7 +101,10 @@ struct HHLoadRecord
 	unsigned int bodyBytes;
 	double seconds;
 	std::vector<std::string> warnings;
-	HHLoadRecord() : bodyBytes(0), seconds(0.0) {}
+	bool bReseeded;                     // --reseed: seeds after the load (-1: the save's stayed)
+	__int64 reseedMap, reseedSync;
+	unsigned __int64 rngBefore, rngAfter; // the game generator's seed around the reseed (with a new sync seed)
+	HHLoadRecord() : bodyBytes(0), seconds(0.0), bReseeded(false), reseedMap(-1), reseedSync(-1), rngBefore(0), rngAfter(0) {}
 };
 
 // Reads a save's header; false (strError) when the file is not a .Civ5Save this host reads.

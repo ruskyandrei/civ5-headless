@@ -553,6 +553,8 @@ InGame state (`CreateLuaThread`) whose environment adds the UI-only globals (`HH
   sent), except `UI.RemoveNotification`, the engine's dismiss (`MayUserDismissNotification`, then
   `DismissNotification`, for a notification shown to the active player). `UI.IsLoadedGame` is true only in a game
   loaded from a save (`loadgame`).
+  With `--reseed MAP:SYNC` the host gives the loaded game new seeds through the official interfaces before the game
+  starts ([saves.md](saves.md), section 4).
 - `UIManager` (1024x768, nothing modal), `ContentManager.IsActive` (true), grid/world conversions (0), `Path`.
 - `Modding.OpenUserData`: an in-memory store (`GetValue`/`SetValue`, `Query` gives no rows), empty at the start of
   every run: user data lives in the user's cache, which a run must not depend on.
