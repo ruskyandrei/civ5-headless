@@ -546,3 +546,22 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   GitHub release. `c5h` from this checkout already defaults to logging off: the Civ5VP conquest experiment runs from it
   (`work/headless/c5h.py`), and its logged baselines need `ai_logging = "on"` in `work/headless/civ5headless.toml` to stay
   comparable.
+
+### 2026-10-30: release 0.4.0
+
+- **What it holds:** AI logging off by default with a switch, and a warning when a comparison mixes the two settings; a save as a
+  baseline with new seeds; a little more host speed; games started together on an empty database cache no longer fail. The
+  kit carries `out/Release/20261030-154805` (`344BF2F3`), built at `e245c94`; only docs and the version changed since.
+- **Why a minor version:** a fixed seed now plays another game with Vox Populi unless `--ai-logging on` asks for the old one.
+- **`verify --host-only`:** the dry run above. AFL and the stock DLL: warn, exit 0, 150 of 150 turns. The official VP 5.4.8 DLL
+  fails in 3 runs of 7, which is the known issue above and not new.
+- **From a kit of the merge commit `cb0bdf4`, unpacked, with its own Python, an empty database cache and 5.4.8's mods:**
+  - `c5h doctor` exit 0, showing AI logging off as the default.
+  - A queue of 4 games, logging off and on: all completed on the empty cache, at flags 0 and 15.
+  - A default game, flags 0, with `--save-at`; its save played on with `--seeds 111 222`, twice: `status.reseed` recorded, the same
+    game both times.
+  - `--ai-logging on` against the default game: flags 15, and `c5h fingerprint compare` warns.
+  - The stock DLL with `--no-mods`: completed, flags 0, with its report.
+- **Not run for this release:** the real game. The last real-game verify is the one above, on StackMod 0.3.3-1, and another
+  session was replacing that install while this one released.
+- **Release:** the user asked for 0.4.0 after the dry run (2026-10-30).

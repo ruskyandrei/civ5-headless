@@ -2,7 +2,7 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
-## Unreleased
+## 0.4.0 (2026-10-30)
 
 - **Behaviour change: AI logging is now off by default, and has a switch.** `c5h run --ai-logging on|off`,
   `run.play(ai_logging=...)`, queue key `aiLogging`, and `ai_logging` in `civ5headless.toml` for games that do not choose

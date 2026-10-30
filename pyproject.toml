@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "civ5headless"
-version = "0.3.2"
+version = "0.4.0"
 description = "Civilization V AI autoplay games without the game: the c5h tools around civ5headless.exe"
 readme = "README.md"
 requires-python = ">=3.11"
