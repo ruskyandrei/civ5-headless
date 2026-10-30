@@ -147,7 +147,43 @@ def reference_checks(ctx):
             summary += ' (coarse: checkpoints only)'
         out.append(check(cid, title, status, summary, comparison=line, method=r['method'], matchedTurns=r['matchedTurns'],
                          compared=r['compared'], divergence=r['divergence'], transients=r['transients'], uiOnly=r['uiOnly']))
+    out.append(reseed_check(ctx))
     return out
+
+
+def reseed_check(ctx):
+    """New seeds for a loaded game (docs/saves.md): one save played on with the same seeds twice, and with one seed
+    changed each. The same seeds must repeat, and at least one seed must change the game; which one depends on the DLL."""
+    cid, title = 'trajectory.reseed', 'New seeds for a loaded game'
+    if ctx.job('reseed-a') is None:
+        return check(cid, title, 'n/a', 'not planned: the host has no --reseed (an older civ5headless.exe), or reseed_turns is 0')
+    for role in ('reseed-save', 'reseed-a', 'reseed-a2', 'reseed-map', 'reseed-sync'):
+        if ctx.job_dir(role) is None:
+            status, why = _missing(ctx, role, f'the {role} game')
+            return check(cid, title, status, why)
+    a = ctx.job_dir('reseed-a')
+    r, why = _compare(ctx, 'reseed-aa', a, ctx.job_dir('reseed-a2'), host_only=True)
+    if r is None:
+        return check(cid, title, 'n/a', why)
+    # same_game leaves out what holds the seeds and generator states: a seed that only changes those changes no game
+    same = {seed: exact.same_game(a, ctx.job_dir(f'reseed-{seed}')) for seed in ('map', 'sync')}
+    responds = [seed for seed in ('map', 'sync') if same[seed][0] is False]
+    unknown = [seed for seed in ('map', 'sync') if same[seed][0] is None]
+    repeats = r['divergence'] is None
+    if unknown:
+        status, summary = 'n/a', f"the games with another {' and '.join(unknown)} seed could not be compared"
+    elif not responds:
+        status, summary = 'warn', "neither seed changes this DLL's games from a save: an ensemble from one save would be copies"
+    else:
+        status = 'pass' if repeats else 'warn'
+        summary = (f"this DLL's games from a save respond to the {' and the '.join(responds)} seed"
+                   + (' only' if len(responds) == 1 else '') + '; ' +
+                   (f"the same seeds repeat ({r['matchedTurns']} of {r['compared']} turns match)" if repeats
+                    else f"but the same seeds differ from turn {r['divergence']['turn']}"))
+    return check(cid, title, status, summary, responds=responds, comparison=exact.summary(r, 'the two games with the same seeds'),
+                 method=r['method'], matchedTurns=r['matchedTurns'], compared=r['compared'], divergence=r['divergence'],
+                 mapSeedChangesGame=same['map'][0] is False, syncSeedChangesGame=same['sync'][0] is False,
+                 how=sorted({same[s][1] for s in same if same[s][1]}))
 
 
 def _reproducible(ctx):

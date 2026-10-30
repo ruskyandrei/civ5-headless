@@ -404,3 +404,69 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   3.4 min, no warnings. 150 of 150 turns for A/A, frame skew and heap perturbation. Its games write `master` -1
   for every civilization.
 - **Release:** the user asked for the merge and a patch release (2026-10-28).
+
+### 2026-10-30: saves as baselines, small speed-ups, AI logging page
+
+- **What it holds** ([plan-speed-and-baselines.md](plan-speed-and-baselines.md)):
+  - `c5h run SAVE --seeds MAP SYNC` and queue jobs with `load` and `seeds`; the host's `loadgame --reseed MAP:SYNC`; the
+    reference `trajectory.reseed` in `c5h verify`; seeds in `status.json`, `setup.json`, `status.save` and the reports.
+  - Engine call counters per call site, one hash per file (`--known-sha256` from `c5h`), `--sba` (off by default).
+  - [ai-logging.md](ai-logging.md).
+- **Seeds, both DLLs, from a save of turn 30 to turn 45 (fingerprints):** same seeds identical on 16 of 16 turns. Vox Populi
+  (AFL, `Release-5.4.8-9-g6b97a2de`) responds to the map seed only, the stock DLL to the sync seed only.
+- **Found on the way:**
+  - The stock DLL ends an autoplayed game on its last turn (`CvGame::update`: active player dead, not an observer, autoplay
+    over), and `Read` makes `GAMESTATE_OVER` extended play. So its final saves stopped right after a load. Autoplay now stops
+    when the state changes, and such a load warns.
+  - `--save-at T` writes nothing when T is the last turn.
+  - Loading calls the stub `getAssignedNetworkID`, unknown to `health.stubs` because `c5h verify` had never loaded a game. The
+    DLL only stores the value in the pregame: on the harmless list.
+  - `CvPlayer::GetBestSettlePlot` and `CvTacticalAI::PlotPillageMoves` are still logging-dependent in VP 5.4.8.
+  - `c5h run`s started together on a cold database cache collided (`PermissionError` on
+    `snapshot.db.build\text-schema.db`). Queues build once before their workers start and were not affected. Fixed below.
+- **Gate, the 0.3.2 host (`89C95256`) against the new build (plan-batch-games.md section 8):**
+  - Fingerprints identical: tactical scenario with its probes and extras (16 of 16), VP Tiny (81 of 81), stock Tiny (61 of 61).
+    Same file lists. Engine call and export counts identical. `newgame-report.json` and `host-report.json` differ only in
+    timings, save sizes (which also vary between two runs of one host), the host's own identity, and the new fields.
+  - `loadgame`: VP from a final save 16 of 16, stock from a `--save-at` save 16 of 16.
+  - Missing DLL, bad spec, Lua error, `--maximum-seconds`, stall: same exit codes and messages.
+  - A small queue: same state and summary fields.
+  - Unit tests: 233 run, 8 skipped, none failed.
+- **Speed:** short game (Duel, 15 turns, one P-core, 9 runs of each): CPU -4.1% (2.297 to 2.203 s), wall -5.4% (2.606 to
+  2.466 s). `--sba` on Tiny, 150 turns: CPU about -3%, wall about -3.5%, identical 151 of 151 turns. The trial's -7% CPU did not
+  repeat. `--sba` is also identical on 100-turn games, VP and stock, 101 of 101 turns.
+- **`verify --host-only` on the final build (`E921DD05`, verdict warn, exit 0):** AFL with 5 mods, and `--no-mods` with the stock
+  DLL: 150 of 150 turns for A/A, frame skew and heap perturbation, `trajectory.reseed` passes. The one warning is
+  `health.ui-hazards`, from the UI file lists, which the gate shows the same on both hosts. With `--host-arg=--sba` on the build
+  before the stub rule: the same trajectory results, and `health.stubs` failing on that stub.
+- **AI logging measured:** Tiny, 150 turns: VP CPU 24.3 to 17.0 s (-30%), stock 9.65 to 8.75 s (-9%). Stock with flags 15, 14, 1
+  and 0: the same game, 151 of 151 turns, on one seed. VP: flags 15 and 1 the same game, 14 and 0 the same game, and the two
+  pairs differ from turn 73 on that seed.
+- **Not run:** the real game, so `c5h verify --quick` has not seen `trajectory.reseed`.
+- **AI logging switch (`--ai-logging`, `aiLogging`, `ai_logging`), and off as `c5h`'s default.** The host's own default stays
+  on, so no host change. On the host `E921DD05` with VP on Tiny, 6 turns each: on, off, the config file's off, a run's on over
+  the file's off, `--host-arg` flags over the file, and `--no-game-logging` over a run's on. In all six `status.json` agreed
+  with `host-report.json` and the report's Run row (`--no-game-logging` is `gameLogFlags` 0 in the status and `gameLogging`
+  false in the host's report). `c5h run` and a queue with one job on and one off also recorded the right setting.
+  - **The new default, Tiny, 150 turns, by fingerprints:** VP, a game that does not choose against `--ai-logging off`: identical,
+    151 of 151 turns; against `on`: first difference at turn 73, as measured earlier on this seed. Stock: all three identical,
+    151 of 151 turns.
+  - **`verify --host-only` on the new default (verdict warn, exit 0):** AFL with 5 mods, and `--no-mods` with the stock DLL: 150
+    of 150 turns for A/A, frame skew and heap perturbation. All 28 host games of each ran with `gameLogFlags` 0. The one
+    warning is `health.ui-hazards`, as before.
+  - `c5h verify` with the real game now reads the logging from `config.ini` (this machine's gives `--game-log-flags 15`, as
+    before). Tested with the fake real game only; the real game was not launched.
+  - The comparison tools warn about a mixed pair. Real runs: `fingerprint compare` of VP on against off warned, and off against
+    off did not. `c5h compare` and `queue compare` tested with fake digests and the fake host only, as this AFL DLL writes no
+    digests.
+- **Parallel runs on an empty database cache (`winproc.file_lock`, `build.lock` in each cache entry):**
+  - Eight `c5h run` processes at once on an empty cache, 4 VP and 4 stock, 30 turns. With the lock patched out, as the code was:
+    7 of 8 failed (`PermissionError` WinError 32, one `disk I/O error`). With it, on two fresh caches: 8 of 8, one snapshot and
+    two databases built, the games of each DLL identical to one another, 31 of 31 turns.
+  - Recovery: a lost `built.db`, a partial one, and builds killed with their children at 0.3, 0.8 and 1.5 s were built again, with
+    the same bytes. A snapshot build killed at 0.3 and 0.8 s was built again. Not tried: killing only the Python process, which
+    leaves the host child running.
+  - The cached database against the explicit one, VP, 150 turns: identical, 151 of 151.
+- **Seen on the way, not changed:** with VP, the last turn of a game differs in the fingerprint from the same turn of a longer game
+  with the same seed (30 against 40 turns: only turn 30 differs, `p00`, `players`). The released host (`89C95256`) does the same,
+  and stock does not. So compare games of the same length up to the last turn.

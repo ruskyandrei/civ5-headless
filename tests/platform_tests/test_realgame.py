@@ -300,6 +300,13 @@ class SeedsTest(unittest.TestCase):
         self.assertEqual(seeds.ini_value(self.ini, 'EnableTuner'), '1')
         self.assertEqual(seeds.ini_value(self.ini, 'LoggingEnabled'), '1')
         self.assertIsNone(seeds.ini_value(self.ini, 'Nothing'))
+        for text, want in (('LoggingEnabled = 1\nAILog = 1\nAIPerfLog = 1\nBuilderAILog = 1\nPlayerAndCityAILogSplit = 1\n', ['--game-log-flags', '15']),
+                           ('LoggingEnabled = 1\nAILog = 0\nBuilderAILog = 1\n', ['--game-log-flags', '4']),
+                           ('LoggingEnabled = 1\n', ['--game-log-flags', '0']),
+                           ('LoggingEnabled = 0\nAILog = 1\n', ['--no-game-logging'])):
+            ini = self.ini.with_name('log.ini')
+            ini.write_text(text, encoding='utf-8')
+            self.assertEqual(seeds.host_log_args(ini), want)
         self.assertEqual(seeds.edit('[A]\nx=1\n[CONFIG]\nfoo = 1\n\n[B]\n', {'MapRandSeed': 1}),
                          '[A]\nx=1\n[CONFIG]\nfoo = 1\nMapRandSeed = 1\n\n[B]\n')
         self.assertEqual(seeds.edit('[A]\r\nx=1', {'MapRandSeed': 1}), '[A]\r\nx=1\r\n[CONFIG]\r\nMapRandSeed = 1\r\n')

@@ -304,6 +304,17 @@ class DiscoveryTest(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             config.load(system=self.m.system(environ={'C5H_CONFIG': str(self.m.root / 'nope.toml')}))
 
+    def test_ai_logging(self):
+        self.assertIsNone(config.load(system=self.m.system()).ai_logging)
+        for text, want in (('"off"', 'off'), ('"On"', 'on'), ('false', 'off'), ('true', 'on')):
+            cfg = config.load(self.write_toml(f'ai_logging = {text}\n'), system=self.m.system())
+            self.assertEqual(cfg.ai_logging, want)
+            self.assertEqual(cfg.notes, [])
+            self.assertEqual(cfg.to_dict()['aiLogging'], want)
+        with self.assertRaises(config.ConfigError) as error:
+            config.load(self.write_toml('ai_logging = "maybe"\n'), system=self.m.system())
+        self.assertIn('ai_logging is on or off', str(error.exception))
+
     def test_to_dict(self):
         d = config.load(system=self.m.system()).to_dict()
         self.assertEqual(set(d['values']), set(config.KEYS))

@@ -33,6 +33,7 @@ import re
 import sys
 
 from . import __version__
+from .compare import mixing
 from .html import CSS, fmt, h, series_svg, short, size, ticks
 
 REPORT = 'report.html'
@@ -632,6 +633,13 @@ def _save_spec(header):
                 difficulty=header.get('handicap'), era=header.get('startEra'))
 
 
+def _seeds_of(spec, st):
+    """(map, sync) of a game: the spec's, or a loaded game's new ones (a seed it was not given is the save's). None: a
+    loaded game that kept the save's random state."""
+    seeds = spec.get('seeds') or st.get('reseed')
+    return (seeds.get('map', "the save's"), seeds.get('sync', "the save's")) if seeds else None
+
+
 def _saves_text(st):
     """The Save row: the save a game was loaded from and the saves it wrote."""
     parts = []
@@ -661,7 +669,7 @@ def _setup_rows(m, ps):
     speed = (spec.get('speed') or {}).get('type') if isinstance(spec.get('speed'), dict) else spec.get('speed') or s.get('speed')
     diff = (spec.get('difficulty') or {}).get('type') if isinstance(spec.get('difficulty'), dict) else spec.get('difficulty')
     era = (spec.get('era') or {}).get('type') if isinstance(spec.get('era'), dict) else spec.get('era')
-    seeds = spec.get('seeds') or {}
+    seeds = _seeds_of(spec, st)
     n_major = len(majors(ps)) or spec.get('majors')
     n_minor = len([p for p in ps.values() if p['minor']]) or spec.get('cityStates')
     dll = st.get('dll') or cmd.get('dll') or (host.get('dll') or {}).get('path') or ''
@@ -691,11 +699,16 @@ def _setup_rows(m, ps):
         options.append(f"{len(host['profiles']['selected'])} UI profiles")
     if host_opts.get('noAddins'):
         options.append('no add-ins')
+    logged = mixing.ai_logging(st, host_opts)
+    if logged is not None:
+        options.append(f"AI logging {'on' if logged else 'off'}")
     if host_opts.get('gameLogging') is False:
         options.append('no game logging')
     for k in ('heapPerturb', 'frameSkew'):
         if host_opts.get(k):
             options.append(f'{k} {host_opts[k]}')
+    if st.get('smallBlockAllocator') or host_opts.get('smallBlockAllocator'):
+        options.append('small-block allocator')
     if isinstance(s.get('diagnosticsLevel'), int) and s['diagnosticsLevel'] > 0:
         options.append(f"diagnostics {s['diagnosticsLevel']}")
     if s.get('abRole'):
@@ -706,7 +719,7 @@ def _setup_rows(m, ps):
              + (f' &middot; {h(m["map0"]["width"])}x{h(m["map0"]["height"])}' if m.get('map0') else '')),
             ('Game', ' &middot; '.join(x for x in (h(pretty(speed, 'GAMESPEED_')), h(pretty(diff, 'HANDICAP_')),
                                                    h(era_name(era)) + ' start' if era else '') if x)),
-            ('Seeds', f"map {h(seeds.get('map'))}, sync {h(seeds.get('sync'))}" if seeds else None),
+            ('Seeds', f"map {h(seeds[0])}, sync {h(seeds[1])}" + (' (new, over the save)' if st.get('reseed') else '') if seeds else None),
             ('Players', f'{h(n_major)} civilizations, {h(n_minor)} city-states'),
             ('DLL', dll_text), ('Mods', mods_text), ('Host', host_text),
             ('Run', ' &middot; '.join(x for x in (f"detail {h(detail)}" if detail else '', h(', '.join(options))) if x)),
@@ -1145,7 +1158,7 @@ def render_summary(models, out_dir, title='c5h runs'):
         has = (Path(m['folder']) / REPORT).is_file()
         mp = spec.get('map') or {}
         world = (spec.get('worldSize') or {}).get('type') if isinstance(spec.get('worldSize'), dict) else m['setup'].get('world')
-        seeds = spec.get('seeds') or {}
+        seeds = _seeds_of(spec, st) or ("the save's",) * 2
         dll = st.get('dll') or m['command'].get('dll') or ''
         mods = m['host'].get('mods')
         proc = st.get('process') or {}
@@ -1153,7 +1166,7 @@ def render_summary(models, out_dir, title='c5h runs'):
                     + (f'<a href="{h(link)}">{h(m["name"])}</a>' if has else h(m['name'])) + '</td>'
                     f'<td><span class="state {h(st.get("state"))}">{h(st.get("state") or "?")}</span></td>'
                     f'<td>{h(Path(str(mp.get("file") or mp.get("script") or "").replace(chr(92), "/")).stem)} {h(pretty(world, "WORLDSIZE_"))}</td>'
-                    f'<td class="mono">{h(seeds.get("map"))}/{h(seeds.get("sync"))}</td>'
+                    f'<td class="mono">{h(seeds[0])}/{h(seeds[1])}</td>'
                     f'<td><span class="mono">{h(Path(dll).name)}</span> <span class="mono muted">{h((st.get("dllSHA256") or "")[:8])}</span></td>'
                     f'<td class="num">{h(len(mods) if isinstance(mods, list) else "-")}</td>'
                     f'<td>{h(", ".join(win)) or "-"}</td><td>{h(pretty(st.get("victory"), "VICTORY_")) if st.get("victory") else ""}</td>'

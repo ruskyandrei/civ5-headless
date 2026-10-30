@@ -63,7 +63,7 @@ SIGNERS = ('CN=Python Software Foundation', 'CN=Microsoft')
 KIT_PATHS = ['python/civ5headless', 'profiles', 'probes', 'examples', 'c5h.cmd', 'civ5headless.example.toml',
              'README.md', 'CHANGELOG.md', 'LICENSE', 'docs/running.md', 'docs/user-guide.md', 'docs/verification.md', 'docs/profiles.md',
              'docs/engine-contract.md', 'docs/database-builder.md', 'docs/dll-additions.md', 'docs/saves.md',
-             'docs/probes.md']
+             'docs/probes.md', 'docs/ai-logging.md']
 RENAMED = {'sdk/README.md': 'licenses/SDK-NOTICE.md'}
 # What civ5headless.exe is built from (tools/build_host.py).
 HOST_SOURCES = ['host', 'sdk', 'tools/build_host.py', 'tools/toolchain.py']

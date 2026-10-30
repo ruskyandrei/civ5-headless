@@ -38,6 +38,7 @@ class Job:
     pin: str | None = None          # the real game whose city-states this game takes (pins.py)
     frame_skew: int | None = None
     heap_perturb: int | None = None
+    save_at: list = field(default_factory=list)  # turns to save at (trajectory.reseed: the save the others load)
     essential: bool = False
     size: str = 'WORLDSIZE_TINY'
     role: str = ''                  # base, aa, skew, perturb, noprobe, setup-<name>-a/-b, ...
@@ -159,12 +160,14 @@ class HostSide:
     """Runs the phases on threads; thread-safe counters for the load timeline."""
 
     def __init__(self, cfg, settings, phases, out_dir, deadline, t0, db, cost=None, play=None, log=print, between=None,
-                 pins=None, pin_spec=None, loc_db=None):
+                 pins=None, pin_spec=None, loc_db=None, log_args=()):
         """between(phase) is called after each phase (the suite adjusts later jobs there); a job with a pin waits for
         that real game's city-states in pins (pins.Pins) and plays pin_spec(spec, minor civ types) instead. loc_db:
-        the localization database for every game (None: the configured one)."""
+        the localization database for every game (None: the configured one); log_args: the host options that log as
+        the real game does, before the host_args setting."""
         self.cfg, self.settings, self.phases = cfg, settings, phases
         self.loc_db = str(loc_db) if loc_db else None
+        self.log_args = list(log_args)
         self.between = between
         self.pins, self.pin_spec = pins, pin_spec
         self.out_dir = Path(out_dir)
@@ -233,6 +236,8 @@ class HostSide:
         phase.finished = self.now()
 
     def run_job(self, job, affinity, concurrency):
+        if job.state == 'skipped':  # the suite decided so after an earlier phase
+            return
         job.estimate = round(self.cost.estimate(job.size, job.turns, concurrency), 1)
         spec = job.spec
         if job.pin and self.pins is not None:
@@ -252,9 +257,9 @@ class HostSide:
             r = self.play(spec, job.turns, run_dir=job.run_dir, cfg=self.cfg, seeds=dict(map=job.seeds[0], sync=job.seeds[1]) if job.seeds else None,
                           dll=s.dll, db=self.db, mods=None if s.no_mods else s.mods, no_mods=bool(s.no_mods), loc_db=self.loc_db,
                           fingerprint=job.fingerprint or False, lua_probes=[str(p) for p in job.probes],
-                          heap_perturb=job.heap_perturb, frame_skew=job.frame_skew, max_seconds=int(max(left, 10)),
+                          heap_perturb=job.heap_perturb, frame_skew=job.frame_skew, save_at=job.save_at, max_seconds=int(max(left, 10)),
                           stall_seconds=300, max_memory_mb=self.settings.max_memory_mb, affinity=affinity,
-                          low_priority=self.settings.low_priority, host_args=list(self.settings.host_args), quiet=True,
+                          low_priority=self.settings.low_priority, host_args=self.log_args + list(self.settings.host_args), quiet=True,
                           # the checks read digests, Lua.log, per-turn checkpoints, replay data, turn times and the
                           # host report: standard keeps them all; no per-game report.html (verify writes its own)
                           detail='standard', report=False)

@@ -144,6 +144,7 @@ All references use the trajectory game's spec and seeds, played to the horizon (
 | `trajectory.frame-skew` | `--frame-skew 7`: an extra engine update before every 7th | whether results depend on the number of engine frames (the real game runs other frame counts) |
 | `trajectory.heap-perturb` | `--heap-perturb SEED`: the DLL rebased, random heap spacers | whether results depend on memory addresses |
 | `trajectory.probe-neutral` | without the Lua probes; for a DLL without state digests, with sparse fingerprints (every `sparse_every` = 25 turns) | that the probes the comparison relies on change nothing (no digests: dense and sparse fingerprints agree at the sampled turns) |
+| `trajectory.reseed` | a save of turn `reseed_save_turn` (20) played on for `reseed_turns` (10) with new seeds: the same seeds twice, then one seed changed each | that the same seeds repeat, and which seed changes this DLL's games from a save ([saves.md](saves.md#a-save-as-a-baseline)). Warns when the same seeds differ or neither seed matters. Vox Populi: the map seed; the stock DLL: the sync seed. Needs a host with `--reseed` |
 | `trajectory.real` | the real game against the host's trajectory game | how long the host matches the real game: N |
 | `trajectory.real-aa`, `trajectory.standard` | full mode: real A/A; the Standard game | the real game's own reproducibility; scale |
 
@@ -285,7 +286,7 @@ turns = 150                 # trajectory and ensemble horizon
 workers = 8                 # host games at once in the ensemble phase
 spec = "specs/my-game.json" # or a table; --map, --size, --players, --city-states, --seeds override parts of it
 ensemble_vary = "auto"      # auto, sync or map
-host_args = ["--no-game-logging"]
+host_args = ["--sba"]
 
 [verify.quick]
 ensemble = 24
@@ -299,6 +300,7 @@ ensemble = 24
 | `ensemble`, `ensemble_seed`, `ensemble_vary` | 32 / 64 / 8, 70001, auto | ensemble size, first varied seed, what varies |
 | `workers`, `reference_workers`, `single_phase`, `affinity`, `low_priority` | 8, 4, true, p-first, with the real game | host scheduling |
 | `frame_skew`, `heap_perturb`, `heal_turns` | 7, 4242, 2 | references and transients |
+| `reseed_save_turn`, `reseed_turns` | 20, 10 | `trajectory.reseed`: the save's turn, the loaded games' length (0: no such reference) |
 | `setups`, `setup_turns` | 4 base-game setups, 1 | turn-0 setups: a list of specs (each may have a `name`) |
 | `standard_spec`, `standard_turns`, `victory_games`, `victory_max_turns` | Standard Continents, 0 / 60, 0 / 4, 500 | full mode |
 | `envelope_band`, `envelope_target`, `envelope_alpha`, `envelope_margin` | [0.025, 0.975], 0.95, 0.05, 0.02 | envelope test |
@@ -309,6 +311,12 @@ ensemble = 24
 | `fingerprint`, `sparse_every` | true, 25 | the fingerprint probe: true, false, or `{every, turns, split}`; the probe-off reference of a DLL without digests |
 | `mods`, `no_mods` (`--mod ID[:VER]`, `--no-mods`) | the configuration's mods, false | the mod set of host games, database and real game |
 | `host_args`, `max_memory_mb`, `reserve_seconds`, `regression_threshold`, `strict` | [], 3500, 15, 0.15, false | other |
+
+**AI logging** ([ai-logging.md](ai-logging.md)): with the real game, the host games log as `config.ini` says
+(`LoggingEnabled`, `AILog`, `AIPerfLog`, `BuilderAILog`, `PlayerAndCityAILogSplit`; `hostLogArgs` in `plan.json`), because with
+some DLLs `AILog` changes the game. `ai_logging` in `civ5headless.toml` does not apply to them. It does apply to `--host-only`,
+where there is no real game to match, so those games have AI logging off unless it says on. A logging option in `host_args`
+wins in every mode, and with the real game the run notes that the two sides may then differ.
 
 ## Statistics self-test
 

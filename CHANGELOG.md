@@ -2,6 +2,50 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
+## Unreleased
+
+- **A save as a baseline** ([docs/saves.md](docs/saves.md#a-save-as-a-baseline)): `c5h run SAVE --turns T --seeds MAP SYNC`
+  plays a save on with new rolls on the same map, so one save can start an ensemble or an A/B test. In a queue, `seeds` x
+  `variants` over a `load` works as it does over a spec.
+  - A queue job with `load` and `seeds` used to ignore the seeds silently, which made its games copies of one another.
+  - Give both seeds: Vox Populi rolls from the map seed and the stock DLL from the sync seed, and the other one alone
+    leaves the game as it was. A game with only one new seed gets a warning.
+  - `status.json` and `setup.json` have `reseed`, `status.save` gets `-m<map>-s<sync>` so `abcompare.py` pairs the same
+    seeds, and the run report and the queue's summary page show them.
+  - In the host: `loadgame --reseed MAP:SYNC`.
+- **`c5h verify`: new reference `trajectory.reseed`.** It checks that the same save and seeds repeat, and reports which
+  seed the DLL's games respond to.
+- **Stock DLL: an autoplayed game's final save now plays on.** The stock DLL ends the game on the last turn of autoplay,
+  so that save holds an ended game, and the host stopped straight after loading it ("autoplay stopped at turn N"). It now
+  plays on in extended play, with a load warning, as no victory can end such a game. A `--save-at` save has none of this.
+- **A little faster, the same games:**
+  - The host counts engine calls without a map lookup and a lock per call, and hashes each file once (`--known-sha256`
+    from `c5h`, so the exe and the DLL not at all). A short Vox Populi game: CPU -4.1%, wall -5.4%.
+  - `--sba` (queue key `smallBlockAllocator`), off by default: a real small-block allocator for the DLL, as the real exe
+    has. A 150-turn Vox Populi game: CPU about -3%, wall about -3.5%; none on a short game. Identical games in the
+    trials. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records
+    it (`smallBlockAllocator`).
+- **[docs/ai-logging.md](docs/ai-logging.md)**: what AI logging costs, how a game with it off differs from the same seed
+  with it on, what the logs hold, and how to turn it off.
+- **AI logging is now off by default, and has a switch.** `c5h run --ai-logging on|off`, `run.play(ai_logging=...)`, queue
+  key `aiLogging`, and `ai_logging` in `civ5headless.toml` for games that do not choose.
+  - **This changes which game a seed plays with Vox Populi.** A fixed seed no longer replays a game from an earlier version,
+    or a real game with `AILog = 1`. `--ai-logging on` plays those games, as `c5h` did before. The stock DLL played the same
+    game either way on the one seed tried.
+  - `--detail full` keeps AI logs only with `--ai-logging on`, and warns when it has none to keep.
+  - A logging option in `--host-arg` still wins, and `civ5headless.exe` run by itself, `c5h parity`, `host-first` and `skew`
+    stay on.
+  - `status.json` records what a game played with (`aiLogging`, `gameLogFlags`), the run report's Run row shows it, and
+    `c5h doctor` shows the setting.
+  - `c5h compare`, `c5h fingerprint compare` and `c5h queue compare` warn when the two games had different AI logging, such as
+    a run from before this change against a new one. `--json` and the queue's `.compare.json` record both (`aiLogging`).
+- **`c5h run`s started together on an empty database cache no longer fail.** They used to build the same snapshot or database
+  over one another (`PermissionError` on `text-schema.db`). Now the first builds and the others wait for it, also for the
+  mods registry. A process that dies while building lets the next one take over.
+- **`c5h verify` with the real game: the host games log as `config.ini` says.** They used to play with all flags on whatever
+  the file said, so a real game with `AILog = 0` was compared with a different host game on DLLs where `AILog` changes the
+  game. `c5h verify --host-only` follows the new default.
+
 ## 0.3.2 (2026-10-28)
 
 - **Queue job seeds:** a job's `seeds` takes `[map, sync]` as well as `{"map": M, "sync": S}`, as the queue's own

@@ -72,6 +72,8 @@ def checks(cfg):
         add(HOST, 'ok' if fp.is_file() else 'warn', 'fingerprint probe',
             str(fp) if fp.is_file() else f'{fp} does not exist (--fingerprint needs it)')
     database_check(cfg, add)
+    add(HOST, 'ok', 'AI logging', f'{cfg.ai_logging}: ai_logging in {cfg.file.name}' if cfg.ai_logging else
+        'off, the default; on writes the AI logs, is slower and plays another game with some DLLs (docs/ai-logging.md)')
 
     # the real game (session.py): read only
     game_exe = cfg.game_dir / 'CivilizationV_DX11.exe' if cfg.game_dir else None

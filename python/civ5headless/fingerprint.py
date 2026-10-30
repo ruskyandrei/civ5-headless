@@ -33,6 +33,8 @@ import json
 import sys
 from pathlib import Path
 
+from .compare import mixing
+
 VERSION = 1
 FP = 'C5HFP|'
 METRIC = 'C5HM|'
@@ -267,11 +269,14 @@ def summary(r):
 
 def cmd_compare(a, b, heal_turns=2, json_out=None):
     r = compare(a, b, heal_turns)
+    r['aiLogging'], warning = mixing.check(a, b)
     print(summary(r))
     if r['first'] and r['first']['metrics']:
         for player, diff in r['first']['metrics'].items():
             print(f"  turn {r['first']['turn']} player {player}: "
                   + ', '.join(f'{k} {_num(v[0])} / {_num(v[1])}' for k, v in diff.items()))
+    if warning:
+        print(warning)
     if json_out:
         Path(json_out).write_text(json.dumps(r, indent=1) + '\n', encoding='utf-8')
     return 0 if r['identical'] and r['common'] else 1

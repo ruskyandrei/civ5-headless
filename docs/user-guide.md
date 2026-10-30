@@ -2,9 +2,10 @@
 
 `civ5headless.exe` plays Civilization V (Brave New World) AI autoplay games with an unchanged game DLL and without the
 game. `c5h` is the command line around it: configuration, databases, single games, batches, comparisons, and the
-real-game automation the references are recorded with. A game from a spec is the game the real game plays from that
-spec: with the Vox Populi DLL the per-turn state digests are identical (a 100-turn Continents reference, and a
-Standard game to victory with 300 of 302 turns identical and the same result). The host is several times faster than
+real-game automation the references are recorded with. With the same AI logging ([ai-logging.md](ai-logging.md)), a game from
+a spec is the game the real game plays from that spec: with the Vox Populi DLL the per-turn state digests are identical (a
+100-turn Continents reference, and a Standard game to victory with 300 of 302 turns identical and the same result, both
+with AI logging on, which is not the `c5h` default). The host is several times faster than
 the game, needs a fifth of its memory, and many games run side by side.
 
 Design and status: [plan](plan.md), [ledger](ledger.md), [engine contract](engine-contract.md), [database
@@ -148,7 +149,7 @@ A spec is JSON mirroring the single-player setup screens; omitted fields behave 
   city-states itself (DLLs that leave that to the game). The real game cannot be told which city-states to place (its
   pregame Lua has no call for it), so a comparison with the real game fills the field with the game's own choice.
 - The two seeds fix the whole game (map, civs, city-states, every AI decision): the same spec, DLL and database give
-  the same game, on every run and in the real game.
+  the same game on every run, and in the real game when the AI logging matches ([ai-logging.md](ai-logging.md)).
 - A spec without seeds draws new ones on every run, recorded in the run's `spec-resolved.json`. Each example
   comes twice: `NAME.json` without seeds (a new game each run), `NAME-fixed-seed.json` with them (the same game
   each run).
@@ -183,16 +184,18 @@ configuration. Useful options:
 | `--affinity MASK`, `--low-priority` | CPU pinning, below-normal priority |
 | `--cpu-limit PERCENT`, `--efficiency-mode` | quieter background runs: a hard cap at PERCENT of one core (the time limits stretch to match), and Windows efficiency mode (EcoQoS, idle priority); the game is the same, only slower ([running.md](running.md#running-in-the-background)) |
 | `--heap-perturb N`, `--frame-skew K` | the verification suite's address and frame-count checks |
+| `--sba` | a real small-block allocator for the DLL (about 3% less CPU on a 150-turn game, none on a short one); for DLLs that pass `trajectory.heap-perturb`. `status.json` records it |
+| `--ai-logging on\|off` | whether the DLL builds its AI logs; default `ai_logging` in `civ5headless.toml`, else off. Off is faster, and with Vox Populi the same seed plays a different game with it on ([ai-logging.md](ai-logging.md)). `status.json` records it (`aiLogging`, `gameLogFlags`) |
 | `--detail summary\|standard\|full` | what the run folder keeps ([Run folders](#run-folders)); default `standard`. `--prune` is the old name of `standard` |
 | `--no-report` | no `report.html` (`c5h report RUN` writes it later) |
-| `--load SAVE` | continue a saved game (`.Civ5Save`, the real game's or the host's) instead of a spec; its mod set unless one is given ([saves.md](saves.md)). A `.Civ5Save` given as the spec does the same |
+| `--load SAVE` | continue a saved game (`.Civ5Save`, the real game's or the host's) instead of a spec; its mod set unless one is given ([saves.md](saves.md)). A `.Civ5Save` given as the spec does the same. With `--seeds`, it plays on with new rolls on the same map ([a save as a baseline](saves.md#a-save-as-a-baseline)) |
 | `--autosave none\|game\|N`, `--save-at T`, `--no-save-final` | the saves the real game loads, in `<run>\saves`: the last turn by default, autosaves none by default ([saves.md](saves.md)) |
 | `--host-arg=ARG` | pass an option to `civ5headless.exe` (run it without arguments for the list) |
 
 From Python, `civ5headless.run.play(spec, turns, ...)` plays one game and returns its run folder, whether it
 completed, its status and its run report (`Result.report`). Its keywords are the options above (`mods=[...]`,
 `no_mods`, `profiles`, `no_profiles`, `skip_addins=[...]`, `no_addins`, `fingerprint=True` or `{"every": K, "turns":
-[...], "split": N}`, `lua_probes=[...]`, `detail='summary'`, `report=False`, `host_args=[...]`, `checkpoint_extras=[...]`, `final_extras=[...]`, ...).
+[...], "split": N}`, `lua_probes=[...]`, `detail='summary'`, `ai_logging='on'`, `report=False`, `host_args=[...]`, `checkpoint_extras=[...]`, `final_extras=[...]`, ...).
 
 ### The DLL
 
@@ -252,7 +255,7 @@ The files follow the real-game benchmark of the Vox Populi fork this came from, 
 | `extra/` | the extras' results (`NAME.jsonl`, `NAME-final.json`) and the files probes write there ([probes.md](probes.md)); kept at every detail level |
 | `turn-times.jsonl`, `turn-seen.json` | seconds since autoplay started, per turn |
 | `replay-messages.json`, `replay-data.json` | replay messages (without type 2) and every major's replay series |
-| `status.json` | `state`, `startTurn`/`endTurn`/`turns`, `wallSeconds`, `secondsPerTurn`, `process` (CPU seconds, peak working set, peak private bytes), `endReason` (target_turn, victory, killed), `winner`/`victory`, `save` (seed key), `background`, `extras` (each extra's rows, errors and first error) |
+| `status.json` | `state`, `startTurn`/`endTurn`/`turns`, `wallSeconds`, `secondsPerTurn`, `process` (CPU seconds, peak working set, peak private bytes), `endReason` (target_turn, victory, killed), `winner`/`victory`, `save` (seed key), `background`, `aiLogging`, `gameLogFlags`, `extras` (each extra's rows, errors and first error) |
 | `host-report.json` | the host's run report: status and error, exe, DLL and databases, options, activated mods, profiles selected, add-in contexts and their errors, unknown UI files, engine stubs the DLL called, Lua errors, timings and memory ([engine contract](engine-contract.md), section 14) |
 | `hh-command.json` | the host command line, the inputs' hashes, the DLL and why, the mods registry, profiles, fingerprint settings, extras (with their SHA-256) and detail level |
 | `final-state.json` | after the last turn: every player (names, colours, alive, score, cities, population, techs, policies, era, wonders, religion; a major's `master`: the player leading its master team, -1 for none, left out by a DLL without vassalage) and the final map (plot owners, cities) |
@@ -269,14 +272,15 @@ the database copies it needs while it runs (`db/`) are deleted afterwards.
 |---|---|---:|
 | `summary` | status, events, setup, spec, host report, turn times, replay data and messages, the final checkpoint, `final-state.json`, `t000-map.json`, `Logs/Lua.log` and `Logs/Headless.log`, `report.html` | 1.0 MB / 0.8 MB |
 | `standard` (default) | also the per-turn checkpoints and the small logs: `HeadlessDigest.log` (digest DLLs), `Database.log`, `CustomMods.log`, `vfs-index.log`, ... | 1.4 MB / 1.1 MB |
-| `full` | everything the host writes: the state dumps (`dump-t000/`, `dump-tN/`, about 85 MB each with a field-map DLL), the database copies (`db/`, about 60 MB) and every log of the DLL (its AI logs) | 243 MB / 58 MB |
+| `full` | everything the host writes: the state dumps (`dump-t000/`, `dump-tN/`, about 85 MB each with a field-map DLL), the database copies (`db/`, about 60 MB) and every log of the DLL (its AI logs with `--ai-logging on`; the sizes here are with them) | 243 MB / 58 MB |
 
 Logs asked for by an option (`Stacking-*.log` with `--diagnostics`, `RandCalls.csv` with `--host-arg=--rand-log`,
 `Logs/HeadlessDumps` with `--host-arg=--dump-turns`) are kept at every level. What reads what: `c5h compare`, `queue
 compare` and the verification suite need the digests (`standard`; the suite asks for it); `c5h fingerprint compare`
 reads `Lua.log` (any level); `c5h dumps` needs the dumps (`full`; `c5h parity`, `host-first` and `skew` run the host
-themselves and keep everything). Leaving out the DLL's AI logs saves disk rather than time: a Standard game's first
-100 turns took 66.6 s and left 4.5 MB at `standard`, and took 69.3 s and left 437 MB at `full`.
+themselves and keep everything). With AI logging on, leaving out the DLL's AI logs saves disk rather than time: a Standard
+game's first 100 turns took 66.6 s and left 4.5 MB at `standard`, and took 69.3 s and left 437 MB at `full`. The DLL does the
+AI logging's work at every level; having it off, the default, is what saves time ([ai-logging.md](ai-logging.md)).
 
 #### The run report
 
@@ -337,7 +341,8 @@ c5h queue report QUEUE.json
   `{"every": K, "turns": [...], "split": N}`), `diagnostics`, `improvedMask`, `abRole`, `checkpointEvery`,
   `maxSeconds`, `stallSeconds`, `maxMemoryMB`, `detail` (default `standard`; the old `prune: false` is `full`),
   `report` (default on), `hostArgs`, `luaProbes`, `checkpointExtras`, `finalExtras`, `lowPriority` (default on),
-  `cpuLimit`, `efficiencyMode`, `load` (a save instead of `spec`),
+  `cpuLimit`, `efficiencyMode`, `smallBlockAllocator` (`--sba`), `aiLogging` (`"on"` or `"off"`), `load` (a save instead of `spec`; `seeds` are then new
+  seeds for the game, [saves.md](saves.md#a-save-as-a-baseline)),
   `autosave`, `saveAt`, `saveFinal`) can be set in `defaults`, a variant or a job. Examples are in
   `examples/queues/`.
 - Mod sets' registries and databases are built once per (mods input, DLL) before the workers start.
@@ -367,6 +372,9 @@ for is zero, one run per (seed, variant) is enough, and more seeds buy more sign
   also without the digest additions), with the per-player metrics of the first differing turn.
 - `c5h digest verify DUMP`: recompute a dump's hashes.
 - `python tools/phase_speed.py RUN...`: seconds per turn by game phase.
+
+`c5h compare`, `c5h fingerprint compare` and `c5h queue compare` warn when the two games had different AI logging
+([ai-logging.md](ai-logging.md)).
 
 ## 8. The real game
 
@@ -490,8 +498,9 @@ phases compare like with like only on average.)
   105 ms apart, so about 3.8 s per turn whatever the AI does); the host runs updates back to back. Late turns are AI
   work in both, and the host still saves the rendering, UI and waiting.
 - **CPU:** 451 CPU-s for 250 turns against 3,985 to 4,900 CPU-s for the real game (it keeps about 2.5 cores busy).
-- **DLL logging:** `--host-arg=--no-game-logging` takes 100 turns from 81.5 s to 55.6 s, but the logging changes AI
-  results in this DLL (the game differs from turn 53), so such runs are not comparable with logged runs or the game.
+- **DLL logging:** the figures here have it on. With it off (measured with `--no-game-logging`), 100 turns go from 81.5 s to
+  55.6 s, but the logging changes AI results in this DLL (the game differs from turn 53), so such runs are not comparable
+  with logged runs or a logging real game ([ai-logging.md](ai-logging.md)).
 
 ### Memory
 
@@ -533,8 +542,9 @@ busy.
 - **UI-driven state:** the host runs the mods' InGameUIAddins and emulates the other UI Lua that changes game state
   with profiles. A UI mod whose stateful Lua is neither an add-in the host can run nor covered by a profile needs a
   new profile; `host-report.json` lists its files as unknown and `c5h hazards scan` finds the calls.
-- **DLL logging changes AI results** in some DLLs: the host turns on the profile's logging like the real game's
-  config. `--host-arg=--no-game-logging` is faster but may play a different game; never mix the two in a comparison.
+- **DLL logging changes AI results** in some DLLs: `c5h` games have AI logging off by default, which is faster, while a real
+  game with `AILog = 1` has it on and may play a different game. `--ai-logging on` plays as that real game does, and
+  `c5h verify` matches `config.ini` itself. Never mix the two in a comparison ([ai-logging.md](ai-logging.md)).
 - **Saves:** a real-game save loaded in the host and in the real game can drift apart after the first turn (1 gold at
   the next turn in one test); the host's load sequence is reconstructed, not traced ([saves.md](saves.md) section 6).
 - **Text:** the localization database is the game's `Localization-Merged.db`; mod text edits need a game launch to

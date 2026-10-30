@@ -39,6 +39,11 @@
 # profiles = "profiles"
 # probes = "probes"
 
+# AI logging of the games that do not choose (c5h run --ai-logging, queue key aiLogging): "off", the default, or "on". Off
+# saves about 30% of a long Vox Populi game, and there the same seed plays a different game with it on (docs/ai-logging.md).
+# c5h verify with the real game ignores it: its host games log as config.ini says.
+# ai_logging = "on"
+
 # Where run folders go (default: <workspace>/runs) and the workspace itself (default: the repository root, or
 # %LOCALAPPDATA%\civ5headless for an installed package).
 # runs = "runs"

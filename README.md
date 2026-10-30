@@ -49,10 +49,17 @@ Games can run quietly in the background: `--cpu-limit 50` holds a game to half o
 it in Windows' efficiency mode, and `c5h queue run --total-cpu-limit 200` holds a whole queue to two cores' worth
 ([docs/running.md](docs/running.md#running-in-the-background)). The games play the same, only slower.
 
+**AI logging is off unless you need the logs** ([docs/ai-logging.md](docs/ai-logging.md)). With it off, a 150-turn Vox
+Populi game takes about 30% less time. Turn it on to read the AI's reasoning (`--ai-logging on --detail full`, queue key
+`aiLogging`, or `ai_logging = "on"` in `civ5headless.toml`). With Vox Populi the same seed plays a different game with it on,
+so give every game in a comparison the same setting; `status.json` and the run report show which a game had. To replay
+a game seed by seed against a real game with `AILog = 1`, or a run from before this default, use `--ai-logging on`.
+
 Games save and load as the real game's `.Civ5Save` files, in both directions: `c5h run SAVE.Civ5Save --turns T`
 continues a save from the real game (or from another run), every run saves its last turn into its `saves\` folder
 (`--no-save-final`: not), and `--autosave` and `--save-at` write more; the real game loads them
-([docs/saves.md](docs/saves.md)).
+([docs/saves.md](docs/saves.md)). With `--seeds` a save plays on with new rolls on the same map, so one save can be the
+baseline of an ensemble or an A/B test ([docs/saves.md](docs/saves.md#a-save-as-a-baseline)).
 
 `python tools/make_kit.py` makes the kit from a commit and a host built at that commit, with python.org's embeddable
 Python (pinned version and hash) in `runtime\`.
@@ -69,7 +76,7 @@ Python (pinned version and hash) in `runtime\`.
 | `profiles/` | UI emulation profiles the host runs in place of the game's UI ([docs/profiles.md](docs/profiles.md)) |
 | `probes/` | Lua probes for the real game and the host |
 | `examples/` | Game specs, queues and example probes |
-| `docs/` | User guide, probes, engine contract, database builder, DLL additions, plan, history |
+| `docs/` | User guide, probes, saves, AI logging, engine contract, database builder, DLL additions, plan, history |
 
 ## Building
 

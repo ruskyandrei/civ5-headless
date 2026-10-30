@@ -125,7 +125,9 @@ prints the Lua that sets up the same game in the real game's setup screen.
 ### 3.2 Seeds
 
 The map seed and the sync seed fix the whole game: the map, the civilizations, the city-states and every AI decision.
-The same spec, seeds, DLL, mods and database give the same game on every run, and the same game the real game plays.
+The same spec, seeds, DLL, mods and database give the same game on every run. It is the same game the real game plays when
+both have the same AI logging: with `--ai-logging on` against a real game with `AILog = 1` in `config.ini`
+([ai-logging.md](ai-logging.md)).
 
 - A spec without seeds gets fresh random ones. They are recorded in the run folder (`spec-resolved.json`), and
   `c5h run runs\NAME\spec-resolved.json --turns N` plays that game again.
@@ -187,7 +189,8 @@ it does not matter. The run's `host-report.json` says who chose (`dll.hostChoseC
 
 The host plays on the same game database the game builds when it loads your mods. It is built automatically and
 cached per mod set and DLL (`cache\db\`), starting from a snapshot of the base game and DLC that is itself built from
-the game's files. You rarely need to touch this:
+the game's files. Games started together on an empty cache share one build: the first builds, and the others wait for it.
+You rarely need to touch this:
 
 - `c5h dbcache` prints (and builds) the cached database for the current mods and DLL.
 - `--db path\to\built.db` plays on a database you built or captured yourself.
@@ -208,7 +211,14 @@ mods: the host activates them for the run (the game need not have them active), 
 c5h run "%USERPROFILE%\Documents\My Games\Sid Meier's Civilization 5\ModdedSaves\single\Rome.Civ5Save" --turns 120
 ```
 
-`--turns` is still the turn to play to, after the save's. `--seeds` does not apply: the save holds the random state.
+`--turns` is still the turn to play to, after the save's. Without `--seeds` the game goes on with the save's random
+state. With them it plays on with new rolls on the same map, so one save can be the baseline of an ensemble or an A/B
+test ([saves.md](saves.md#a-save-as-a-baseline)):
+
+```
+c5h run Rome.Civ5Save --turns 120 --seeds 1001 2002
+```
+
 `c5h save FILE...` shows what a save is: turn, civilization, map, DLC, mods and DLL (`--json` for all of it).
 
 Every save a run writes stays in its folder, `<run>\saves\`, never in the game's save folders. By default a run
@@ -366,12 +376,14 @@ doesn't write what the level leaves out.
 |---|---|---:|---:|
 | `summary` | results, setup, timings, replay, the final checkpoint and state, `Lua.log`, the report | about 1 MB | |
 | `standard` (default) | also a checkpoint every turn and the small logs, including `HeadlessDigest.log` | about 1.4 MB | 4.5 MB |
-| `full` | everything: state dumps (`dump-t000\`, `dump-tN\`), the game database copy (`db\`), all of the DLL's logs (including its AI logs) | 60 to 250 MB | 437 MB |
+| `full` | everything: state dumps (`dump-t000\`, `dump-tN\`), the game database copy (`db\`), all of the DLL's logs (its AI logs with `--ai-logging on`; the sizes here are with them) | 60 to 250 MB | 437 MB |
 
 - `standard` is enough for the report, `c5h compare`, `c5h queue compare` and the verification suite, which need the
   digests. `c5h fingerprint compare` works at any level.
-- Use `full` when you need the DLL's AI logs, or the state dumps for `c5h dumps`.
-- The levels save disk, not time. The Standard game above took 66.6 s at `standard` and 69.3 s at `full`.
+- Use `full` with `--ai-logging on` when you need the DLL's AI logs, and `full` for the state dumps for `c5h dumps`. The
+  level only decides what is kept: with AI logging on, the DLL does its work at every level ([ai-logging.md](ai-logging.md)).
+- The levels save disk, not time. The Standard game above, with AI logging on, took 66.6 s at `standard` and 69.3 s at
+  `full`.
 - Logs you ask for are kept at every level: `Stacking-*.log` with `--diagnostics`, and `RandCalls.csv` with
   `--host-arg=--rand-log`.
 - `--prune` is the old name of `--detail standard`.
@@ -381,7 +393,7 @@ doesn't write what the level leaves out.
 | File | Contents |
 |---|---|
 | `report.html` | the report above (none with `--no-report`) |
-| `status.json` | the outcome (completed, stopped or failed), turns played, wall time, CPU, peak memory, winner, and your extras' rows and errors |
+| `status.json` | the outcome (completed, stopped or failed), turns played, wall time, CPU, peak memory, winner, whether AI logging was on, and your extras' rows and errors |
 | `events.jsonl` | what the runner did, one JSON line per event (DLL choice, database build, launch, turns, end) |
 | `setup.json`, `spec-resolved.json` | the game as set up: map, civs and seeds, enough to play it again |
 | `hh-command.json` | the host command line, the inputs' hashes, the DLL and why it was chosen, the detail level |
@@ -395,7 +407,7 @@ doesn't write what the level leaves out.
 | `host-stdout.txt` | the host's console output |
 | `saves\` | the run's saves: the last turn unless `--no-save-final`, and those asked for (section 3.6); kept at every detail level |
 | `save-header.json` | with `--load`: the header of the save the game continued |
-| `Logs\` | `Lua.log` (with fingerprints), `Headless.log`, and `HeadlessDigest.log` for DLLs with the digest additions; the AI logs at `full` |
+| `Logs\` | `Lua.log` (with fingerprints), `Headless.log`, and `HeadlessDigest.log` for DLLs with the digest additions; the AI logs at `full` with `--ai-logging on` |
 
 ## 7. Many games: queues
 
@@ -420,9 +432,9 @@ c5h queue status my-queue.json
   `noAddins`, `fingerprint` (`true` or `{"every": K, "turns": [...], "split": N}`), `luaProbes`,
   `checkpointExtras`, `finalExtras`, `seeds`,
   `checkpointEvery`, `maxSeconds`, `stallSeconds`, `maxMemoryMB`, `detail`, `report`, `lowPriority`, `cpuLimit`,
-  `efficiencyMode`, `hostArgs`,
-  `load` (a save instead of `spec`; a `spec` that is a `.Civ5Save` is loaded too), `autosave`, `saveAt`,
-  `saveFinal` (default `true`).
+  `efficiencyMode`, `smallBlockAllocator` (`--sba`), `aiLogging` (`"on"` or `"off"`, the default, [ai-logging.md](ai-logging.md)), `hostArgs`,
+  `load` (a save instead of `spec`; a `spec` that is a `.Civ5Save` is loaded too; its `seeds` are then new seeds for the
+  game, [saves.md](saves.md#a-save-as-a-baseline)), `autosave`, `saveAt`, `saveFinal` (default `true`).
 - Paths in the file are relative to the file. Run folders go to `"out"` (default `runs\<queue file name>`).
 - The queue is resumable: `QUEUE.state.json` remembers what is done. Stop it with Ctrl-C (running games are killed and
   re-queued at the next start) or by creating `QUEUE.stop` (running games finish, no new ones start). Rerun
@@ -457,6 +469,11 @@ seed is caused by the change, not by chance. More seeds give more confidence in 
 | `c5h dbdiff A.db B.db` | two game databases, table by table |
 
 Exit code 0 means identical. A difference that heals within two turns (`--heal-turns`) is reported as a transient.
+
+`c5h compare`, `c5h fingerprint compare` and `c5h queue compare` warn when the two games had different AI logging, which with
+some DLLs alone plays a different game ([ai-logging.md](ai-logging.md)). The warning changes nothing else, and `--json`
+records both settings (`aiLogging`). Bare log files and references recorded from the real game do not say what they had, so
+they get no warning.
 
 ## 9. The verification suite
 
@@ -517,8 +534,9 @@ ensemble = 48
 ```
 
 All keys: `workspace`, `game_dir`, `user_dir`, `mods_dir`, `cache_dir`, `mods_db`, `loc_db`, `config_ini`, `dll`,
-`snapshot`, `db`, `db_cache`, `exe`, `profiles`, `probes`, `toolchain`, `runs`; `[verify]` holds the verification
-suite's settings (verification.md). `civ5headless.example.toml` describes each one. `c5h doctor` shows the result.
+`snapshot`, `db`, `db_cache`, `exe`, `profiles`, `probes`, `toolchain`, `runs`, and `ai_logging` (`"on"` or `"off"`, the default, for
+games that do not choose: [ai-logging.md](ai-logging.md)); `[verify]` holds the verification suite's settings (verification.md).
+`civ5headless.example.toml` describes each one. `c5h doctor` shows the result.
 
 ## 11. Limits and resources
 
@@ -577,7 +595,9 @@ For DLL and host developers; regular runs do not need them.
 |---|---|
 | `--frame-skew K` | an extra engine update before every K-th one: a game that changes is frame-rate dependent |
 | `--heap-perturb SEED` | moves the DLL and the heap: a game that changes depends on memory addresses |
-| `--host-arg ARG` | pass an option straight to `civ5headless.exe` (repeatable), e.g. `--host-arg=--no-game-logging` |
+| `--sba` | a real small-block allocator for the DLL, as the real exe has (blocks up to 512 bytes): about 3% less CPU on a 150-turn game, none on a short one. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records it |
+| `--ai-logging on\|off` | whether the DLL builds its AI logs. Default: `ai_logging` in `civ5headless.toml`, else off. Off saves about 30% of a 150-turn Vox Populi game, and there the same seed plays a different game with it on. `status.json` records it (`aiLogging`, `gameLogFlags`), and the report shows it ([ai-logging.md](ai-logging.md)) |
+| `--host-arg ARG` | pass an option straight to `civ5headless.exe` (repeatable), e.g. `--host-arg=--no-game-logging`. A logging option here wins over `--ai-logging` |
 | `--exe`, `--game-dir`, `--loc-db` | another host build, game folder or localization database |
 | `--diagnostics`, `--improved-mask`, `--ab-role` | A/B switches of the Vox Populi fork's stacking AI (DLLs with those switches) |
 

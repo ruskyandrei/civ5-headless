@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 from civ5headless import config, html, modsdb, queue, report, run
+from civ5headless.compare import mixing
 
 from .test_modsdb import ADDON_ID, BASE_ID, make_mods
 
@@ -312,6 +313,14 @@ class ReportTest(unittest.TestCase):
                                              ('vassal', 3, "Egypt is England's vassal"), ('', 4, None), ('', 5, None),
                                              ('dead', 1, None)])
         self.assertIn('Vassals are listed under their master, as at the end of the game: from the replay messages', text)
+
+    def test_ai_logging_of_older_runs(self):
+        """status.json says; before it did, host-report.json."""
+        self.assertIs(mixing.ai_logging({'aiLogging': False}, dict(gameLogging=True, gameLogFlags=15)), False)
+        self.assertIs(mixing.ai_logging({}, dict(gameLogging=True, gameLogFlags=15)), True)
+        self.assertIs(mixing.ai_logging({}, dict(gameLogging=True, gameLogFlags=14)), False)
+        self.assertIs(mixing.ai_logging({}, dict(gameLogging=False, gameLogFlags=15)), False)
+        self.assertIsNone(mixing.ai_logging({}, dict(gameLogging=True)))
 
     def test_vassals_from_the_final_state(self):
         m = report.collect(make_vassal_run(self.dir / 'v', masters={2: 0, 4: 2, 1: 0}))

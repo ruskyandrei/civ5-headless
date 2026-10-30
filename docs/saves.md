@@ -48,7 +48,8 @@ A `.Civ5Save` given where the spec goes is loaded, the same as `--load`. Any sav
   example) and the cached game database that new games use. Otherwise a registry is generated for the save's mods,
   as for `--mod`. The mods must be in the MODS folder; the game need not have them active.
 - **DLL:** chosen as for any game (`--dll`, a `dll` in `civ5headless.toml`, else the mod set's).
-- **Seeds:** `--seeds` is refused, because the save holds the random number generators' state.
+- **Seeds:** without `--seeds` the game goes on with the save's random state. With `--seeds MAP SYNC` it gets new seeds
+  from there on ([A save as a baseline](#a-save-as-a-baseline)).
 - **Run folder:** without `--run`, it is named after the save. `save-header.json` holds the save's header;
   `status.json` has `loadedFrom`, `loadWarnings` and `startTurn` (the save's turn), and `save` is
   `loaded-<save name>-t<turn>-<file hash>`, so runs from one save group together. The run ends with its own final
@@ -69,12 +70,74 @@ The host checks the save before loading it:
 `c5h save FILE...` shows a save's header: turn, game type, civilization, handicap, map script, world size, speed,
 eras, DLL GUID and version, mods and DLC (`--json` prints all of it).
 
+### A save as a baseline
+
+One save can start many games: an ensemble from one position, or an A/B test of two DLL builds where every arm starts
+from the same turn.
+
+```
+c5h run my-spec.json --turns 101 --save-at 100 --run base
+c5h run "runs\base\saves\Turn_0100 <date>.Civ5Save" --turns 130 --seeds 1001 2002 --run base-s1
+c5h run "runs\base\saves\Turn_0100 <date>.Civ5Save" --turns 130 --seeds 1003 2004 --run base-s2
+```
+
+`--save-at T` saves when turn T ends, so the game must go past T: `--turns 100 --save-at 100` writes only the final save.
+
+In a queue, `seeds` x `variants` over a save works as it does over a spec:
+
+```json
+{"defaults": {"load": "base.Civ5Save", "turns": 130},
+ "variants": {"A": {"dll": "a.dll", "abRole": "baseline"}, "B": {"dll": "b.dll", "abRole": "test"}},
+ "seeds": [[1001, 2002], [1003, 2004]]}
+```
+
+What the new seeds change:
+
+- **The map stays the save's.** Only what is rolled from then on changes, so this gives what a new Vox Populi game
+  cannot: other rolls on the same map. A new VP game with another map seed gets another map, and with another sync seed
+  the same game ([verification.md](verification.md), "The ensemble").
+- **Give both seeds.** A DLL rolls from one of them, and the other one alone leaves the game as it was. Measured from a
+  save of turn 30, played to turn 45 (fingerprints, 16 turns):
+
+  | Compared | Vox Populi (5.4.8) | Stock DLL |
+  |---|---|---|
+  | The save loaded twice, no new seeds | identical | identical |
+  | New seeds (111, 222) twice | identical | identical |
+  | No new seeds against new seeds | differ from turn 31 | differ from turn 32 |
+  | Seeds (111, 222) against (333, 444) | differ from turn 31 | differ from turn 31 |
+  | New map seed only, against no new seeds | differ from turn 31 | **identical** |
+  | New sync seed only, against no new seeds | **identical** | differ from turn 32 |
+
+  `c5h run` and the queue warn when a game gets only one new seed. `c5h verify` reports which seed your DLL responds to
+  (`trajectory.reseed`).
+- **The same save and seeds give the same game**, so a game played with `--ai-logging on` can be played again with `--detail
+  full` to see why it went as it did. A game played with AI logging off, the default, has no such replay: turning it on plays
+  another game ([ai-logging.md](ai-logging.md)).
+- **The run's later saves carry the new seeds.**
+
+What it records: `status.json` and `setup.json` have `reseed` (`{"map": M, "sync": S}`), `status.save` is
+`loaded-<save name>-t<turn>-<file hash>-m<map>-s<sync>`, so `abcompare.py` pairs the arms that had the same seeds, and
+`host-report.json` has `load.reseed`, with the game generator's seed before and after. The run report and the queue's
+summary page show the seeds.
+
+Things to keep in mind:
+
+- **Compare loaded games with loaded games.** A loaded game does not reproduce the game that wrote the save (section 6:
+  VP's espionage AI lists, part of the turn played again). All arms from one save share these effects, so an A/B from
+  one save is sound.
+- **A/B across DLL builds:** VP builds share a GUID, so a save loads into another build. The host fails the load if the
+  DLL does not use up the body exactly, but whether the saved data suits the other build stays your call.
+- **Use a `--save-at` save rather than a final one with the stock DLL.** The stock DLL ends an autoplayed game on its last
+  turn, because the active player is dead, so its final saves hold an ended game. Such a game plays on in extended play,
+  where no victory can end it; the load warns about it (`loadWarnings`). VP does not end the game there.
+- **One save is one position.** An odd position shows in every arm: use several baselines.
+
 ### From Python and queues
 
 - `run.play(SAVE, turns, autosave='game', save_at=[50], save_final=False)`: a save given as the spec is loaded (or
-  `run.play(None, turns, load=SAVE)`); `save_final` is True by default.
+  `run.play(None, turns, load=SAVE)`); `save_final` is True by default. `seeds={'map': M, 'sync': S}` gives it new seeds.
 - Queue jobs take a save as `spec` or as `load`, and `autosave`, `saveAt` and `saveFinal` (default true). A job that
-  loads a save gets the save's mod set unless it names one.
+  loads a save gets the save's mod set unless it names one. Its `seeds` are new seeds for the game.
 - `savegame.read_header(path)` returns a `SaveHeader`; its `mod_set` is the save's mods as `--mod` values.
   `savegame.is_save(path)` tells a save from a spec.
 - The real-game session (`realgame/session.py`):
@@ -161,7 +224,12 @@ Then `HHLoadSavedGame` runs:
 3. **Body:** inflate; `CacheGameDatabaseData`; `Game::Read`, `Map::Read`, teams 0–63 `Read`, players 0–63 `Read`,
    `ReadSupportingClassData`; the body must be used up exactly. From here on `IsLoadedGame` is true, for the DLL
    (`ICvUserInterface1::IsLoadedGame`) and for Lua (`UI.IsLoadedGame()`).
-4. **Start**, as for a new game (`HHGameStartedSteps`):
+4. **New seeds** (`--reseed MAP:SYNC`; either side may be empty, which keeps the save's), through the official interfaces:
+   `ICvPreGame1::setMapRandomSeed(MAP)`, `setSyncRandomSeed(SYNC)`, then `ICvGame1::GetRandomNumberGenerator()`,
+   `ICvRandom1::Reset(SYNC % 52319761)` (the reduction `CvGame::init` applies). The map generator (`m_mapRand`) cannot be
+   reached and keeps the save's state; after the map is made, VP uses it only in `CvPlot::getInlandCorner` and the
+   simultaneous-turn shuffle.
+5. **Start**, as for a new game (`HHGameStartedSteps`):
    - `LaterInit` for players 0–63 (`CvPlayer::gameStartInit`, which checks `IsLoadedGame`);
    - the tactical map, the game options, `SetGraphicsInitialized`, `SetupGraphical`, `DoGameStarted`;
    - the net message reset, the player options, the delivered net messages;
@@ -169,14 +237,14 @@ Then `HHLoadSavedGame` runs:
    - the notifications.
 
    A new game's own steps are left out: closing dead city-state slots, selecting the settler.
-5. **Digest logging** on for DLLs with the digest additions, which otherwise start it in `CvGame::init`. A load does
+6. **Digest logging** on for DLLs with the digest additions, which otherwise start it in `CvGame::init`. A load does
    not run `CvGame::init`.
 
 Then the load screen, the UI add-ins, the probes and autoplay, as for a new game. Autoplay is armed with the same
 Lua as the real-game session's (`Game.SetAIAutoPlay(n, 0)`). The checkpoint the host writes at the start is named
 after the save's turn.
 
-**Assumption (not traced):** the real game's load sequence was not recorded with the trace DLL. Steps 2 and 4
+**Assumption (not traced):** the real game's load sequence was not recorded with the trace DLL. Steps 2 and 5
 follow the DLL's own code and what the engine does for a new game. Section 6 says how far the result has been
 checked against the real game.
 
@@ -234,4 +302,7 @@ Run on 2026-10-26, on a Tiny Continents fixed-seed game.
 - A loaded game resumes where the save was taken. For an autosave or `--save-at` save that is the post-turn point of
   the first player, so part of that turn is played again. That is the real game's behaviour too.
 - The game option `GAMEOPTION_NEW_RANDOM_SEED`, if a save has it, reseeds the random number generators on load, so
-  continuing that save is not repeatable. The host does what the DLL does.
+  continuing that save is not repeatable. The host does what the DLL does. `--seeds` overrides that reseed, so it makes
+  such a save repeatable.
+- A save of an ended game plays on in extended play, where no victory can end it (the DLL's `Read` makes
+  `GAMESTATE_OVER` that). The stock DLL's final saves are such saves ([A save as a baseline](#a-save-as-a-baseline)).
