@@ -130,6 +130,12 @@ both have the same AI logging: with `--ai-logging on` against a real game with `
 ([ai-logging.md](ai-logging.md)). The DLL means the exact build: plain Vox Populi 5.4.8 built with VC9 and with clang played
 different games from turn 37 on the one seed tried, and the clang build took 28% less CPU.
 
+**One known exception: the official Vox Populi 5.4.8 DLL (`262AEE88`) does not always repeat.** On the one seed tried, the same
+command played one of two games, which part at turn 118, with AI logging on or off. How often depends on the length of the run
+folder's path: 32 of 216 games at one length, 1 of 99 at others. AFL, a later build of Vox Populi, showed none in 64 games on
+that seed, and the stock DLL repeated in its verify run. The cause is not known. `c5h verify` fails on it, so run it on your DLL
+before you read much into a difference between two games.
+
 - A spec without seeds gets fresh random ones. They are recorded in the run folder (`spec-resolved.json`), and
   `c5h run runs\NAME\spec-resolved.json --turns N` plays that game again.
 - Each example comes twice: `examples\specs\NAME.json` has no seeds (a new map and game on every run), and

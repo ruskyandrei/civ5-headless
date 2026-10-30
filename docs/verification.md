@@ -351,6 +351,8 @@ Host-only mode, Tiny Continents, 150 turns, 8 host processes at most, on the dev
 |---|---|---|---|
 | Vox Populi (digest additions), its mods | 4.0 min | pass | A/A, frame skew, heap perturbation: 150 of 150 turns (digests); no UI hazard a game can reach (259 input-only); the DLL chose the city-states; the ensemble varies the map seed; 0.43 s per turn, 450 MB |
 | stock BNW DLL, no mods | 0.8 min | warn | the fingerprint compares (no digests): 150 of 150 turns; dense and sparse fingerprints agree; the specs named the city-states and the host applied them; the sync seed changes this DLL's games, so the ensemble keeps the map; 37 game-reachable UI hazards (EUI_core_library and EUI_tooltip_library, EUI being installed as DLC: 20; LeaderHeadRoot, TradeLogic, TopPanel: 17) and 25 EUI files no profile knows: the warning; 0.08 s per turn, 121 MB |
+| Vox Populi master with two crash fixes (AFL), its 5 mods (run 2026-10-30) | 1.0 min | warn (UI hazards) | A/A, frame skew, heap perturbation: 150 of 150 turns (fingerprints); `trajectory.reseed` passes |
+| Vox Populi 5.4.8 release, its 5 mods (7 runs, 2026-10-30) | 1.7 min | warn in 4, fail in 3 | this DLL does not always repeat ([running.md](running.md#32-seeds)): in the 3 the job `trajectory` played the other game, so A/A reaches 118 of 150 turns and `trajectory.probe-neutral` fails; in the 4, 150 of 150 |
 
 With the real game, on the development machine (2026-10-26; one real game beside 8 host processes):
 

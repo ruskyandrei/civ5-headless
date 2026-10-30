@@ -46,6 +46,10 @@ Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-
 - **`c5h verify` with the real game: the host games log as `config.ini` says.** They used to play with all flags on whatever
   the file said, so a real game with `AILog = 0` was compared with a different host game on DLLs where `AILog` changes the
   game. `c5h verify --host-only` follows the new default.
+- **Known issue, not new in this release: the official Vox Populi 5.4.8 DLL does not always repeat a game.** On the one seed
+  tried, the same command played one of two games, which part at turn 118, on this release's host and on 0.3.2's, with AI
+  logging on or off. How often depends on the length of the run folder's path, so `c5h verify --host-only` can fail on this
+  DLL in one folder and pass in another ([docs/running.md](docs/running.md#32-seeds)). The cause is not known.
 
 ## 0.3.2 (2026-10-28)
 

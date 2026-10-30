@@ -502,3 +502,47 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   - In use and not clang: the installed DLL, and `dll` in this checkout's local `civ5headless.toml`, the VC9 digest build
     `CB6B0BED` (digest builds exist only for VC9). Everything else in use is clang already. StackMod has no clang build of
     0.3.3-1: its clang recipe came with 0.3.5.
+- **Release dry run on `e245c94`, nothing published:**
+  - Host `344BF2F3` built from clean sources. 250 unit tests, 8 skipped, OK. `make_kit --smoke`: `c5h doctor` exit 0 in the
+    unpacked kit, 12 MB.
+  - `verify --host-only`, Tiny, 150 turns, all 28 games at flags 0: AFL (`E3C3AF91`, 1.0 min) and the stock DLL (`C5483B58`, 0.6
+    min): warn, exit 0, 150 of 150 for A/A, frame skew and heap perturbation, `trajectory.reseed` passes, the one warning
+    `health.ui-hazards`. AFL needs the mods of its own checkout: with the 5.4.8 mods it stops on `no such table:
+    UnitPromotions_TerrainHeal`.
+- **The official VP 5.4.8 DLL (`262AEE88`) does not always repeat. Not a regression; the cause is not found.**
+  - `verify --host-only` on it failed in 3 runs of 7 and gave warn in 4. In each failure the job `trajectory` played another game
+    than `trajectory-aa`, `-skew7` and `-perturb4242`, which agreed, so A/A stops at 118 of 150 and `trajectory.probe-neutral`
+    fails (it compares with the same game).
+  - Only two games ever appear, in every case below: the other one differs from turn 118 on, 33 of 151 turns. At turn 118 the
+    barbarians have 15 units against 9, and player 1 has one unit fewer, with less culture, faith and gold.
+  - The verify commands differ only in the run folder's path. Replaying the command, Tiny, 150 turns, the same seed
+    (30017, 40017), logging off unless named:
+
+    | Case | Host's path length | Other game |
+    |---|---:|---:|
+    | verify's `trajectory` job | 181 | 3 of 7 |
+    | the stamps of failing and passing runs, three times each | 181 | 2 of 15, and a stamp gives either game |
+    | random stamps | 181 | 1 of 16 |
+    | another job name of the same length | 181 | 0 of 2 |
+    | as verify ran it | 181 | 5 of 32 |
+    | without `pregame.lua` | 181 | 2 of 32 |
+    | without `probe-settings.lua` | 181 | 5 of 32 |
+    | without either | 181 | 5 of 32 |
+    | AI logging on | 181 | 5 of 32 |
+    | the released host (`89C95256`), random stamps | 181 | 4 of 16 |
+    | **all of the above** | 181 | **32 of 216** |
+    | other job names | 178 to 185 | 1 of 14 |
+    | verify's `-aa`, `-skew7`, `-perturb4242` | longer | 0 of 21 |
+    | `c5h run`, both hosts, logging on and off | shorter | 0 of 64 |
+    | **all at other lengths** | | **1 of 99** |
+    | AFL, as verify ran it | 181 | 0 of 32 |
+    | AFL, `c5h run`, logging on and off | shorter | 0 of 32 |
+
+  - So it differs from process to process with one command, and neither the probes, nor AI logging, nor this branch's host causes
+    it. Which fits a read of uninitialised or address-dependent memory, as a path's length moves heap blocks, but that is not
+    shown, nor is the host ruled out. AFL's 0 of 64 is one seed, so it does not show that a later commit fixed it.
+  - Earlier passes on this DLL (2026-10-26) ran in run folders of other lengths.
+- **Left for a release:** merge to `main`, version, changelog heading, README status, the kit from the release commit, tag, push,
+  GitHub release. `c5h` from this checkout already defaults to logging off: the Civ5VP conquest experiment runs from it
+  (`work/headless/c5h.py`), and its logged baselines need `ai_logging = "on"` in `work/headless/civ5headless.toml` to stay
+  comparable.
