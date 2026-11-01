@@ -120,7 +120,7 @@ The file is a Lua chunk. c5h calls it with one argument, `ctx`, and keeps what i
 | `state` | a table kept for this file from call to call (empty at the first), for differences, running totals and caches of database lookups |
 | `runDir`, `extraDir` | the run folder and its `extra` folder (for files you write yourself) |
 
-Each call runs in a fresh Lua thread: globals the file sets are gone at the next call. Keep what must last in
+Each call starts with fresh globals: those the file sets are gone at the next call. Keep what must last in
 `ctx.state`. Data from a probe comes through `_G` (recipe 8.2).
 
 ### From return value to JSON

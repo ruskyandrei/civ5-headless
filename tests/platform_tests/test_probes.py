@@ -85,6 +85,8 @@ class ExtrasTest(unittest.TestCase):
             # the source without its byte order mark, its path for error messages
             self.assertIn(' run([[\nstats]],[[\n' + str((tmp / 'stats.lua').resolve()) + ']],[[\nreturn {gold = 1}\n]])', lua)
             self.assertIn("local key='final:'..name", lua)
+            # fresh globals at every call: the host keeps one thread for the checkpoint chunk
+            self.assertIn('setfenv(f,setmetatable({},{__index=env}))', lua)
             self.assertIn('runDir=[[\n' + str((tmp / 'run').resolve()) + ']]', lua)
             self.assertNotIn('%(', lua)
             chunk = 'local out={}\nif x then return out end\nreturn out\n'

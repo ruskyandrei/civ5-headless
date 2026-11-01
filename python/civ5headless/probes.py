@@ -134,11 +134,12 @@ def extra_files(files):
 # Runs at the end of c5h's checkpoint or final chunk, where out is the table the chunk returns. Each file is compiled
 # with loadstring (its own name in error messages, without the '@' this Lua leaves in front) and called with ctx; what
 # it returns goes into out.extra[name], copied with non-finite numbers made nil (they are not JSON) and cycles cut, and
-# an error into out.extraErrors[name] and Lua.log. ctx.state is a table kept for the file between calls (in _G, as the
-# chunk runs in a fresh thread).
+# an error into out.extraErrors[name] and Lua.log. ctx.state is a table kept for the file between calls (in _G). Each
+# call gets fresh globals of its own, as the host keeps one thread for the checkpoint chunk.
 EXTRA = r'''-- c5h: --%(kind)s-extra files (docs/probes.md)
 do
  local all=_G.C5H_EXTRA_STATE or {};_G.C5H_EXTRA_STATE=all
+ local env=getfenv(1)
  local huge=math.huge
  local function clean(x,seen)
   local t=type(x)
@@ -156,7 +157,7 @@ do
   local state=all[key] or {};all[key]=state
   local f,err=loadstring(source,'@'..path)
   local ok,r=false,err
-  if f then ok,r=pcall(f,{name=name,kind='%(kind)s',turn=Game.GetGameTurn(),state=state,runDir=%(run_dir)s,extraDir=%(extra_dir)s}) end
+  if f then setfenv(f,setmetatable({},{__index=env}));ok,r=pcall(f,{name=name,kind='%(kind)s',turn=Game.GetGameTurn(),state=state,runDir=%(run_dir)s,extraDir=%(extra_dir)s}) end
   if ok then extra[name]=clean(r,{}) else
    local message=(string.gsub(tostring(r),'^@',''))
    errors[name]=message;print('c5h %(kind)s extra '..name..': '..message)
