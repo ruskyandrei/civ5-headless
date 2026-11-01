@@ -596,6 +596,26 @@ The host's own history (milestones M0–M6, parity work against the real game) i
   extra rows equal to 0.4.0's.
 - **Release:** the user asked for 0.4.1 after reviewing the note (2026-11-01). The kit carries `out/Release/20261101-192454`
   (`DE45A150`), built at `94740ee`; only the driver fix, docs and the version changed since.
+
+### 2026-11-01: `--no-exclusive-db`, 0.4.1 updated in place
+
+- **Why:** exclusive mode, new in 0.4.1, shuts other programs out of a running game's `db\built.db` ("database is locked" on reading or
+  taking a write lock), because the DLL writes to it at startup. Copying the file and opening the copy still works, and the localization
+  copy stays readable, as the DLL only reads it. Everything is normal once the game ends or the host is killed.
+- **In place:** the user chose to update 0.4.1 rather than release 0.4.2. So the same version has a new kit and the tag moved to the
+  new commit. The first kit, `civ5-headless-0.4.1-7344df884.zip`, had one download by then, and it stays in this checkout's `dist`.
+- **Host:** `out/Release/20261101-213039` (`29037666`), built from clean sources at `a1bf8b8`.
+- **The switch:** with it, `built.db` can be read during a game; without it, "database is locked". On `88BE4561`, the same source before
+  the commit: whole games on all four DLLs match 0.4.1's first build. On stock, a pair against the same build without the switch
+  was CPU +10.4%, wall +8.1%; on clang VP, CPU +0.4%, wall -0.1%. One game each on E-cores, so rough.
+- **`29037666`, default settings:** 4 whole games (clang VP, official, StackMod, stock; seed p1) match the first build's. `verify
+  --host-only` on all four: warn, exit 0, 150 of 150 turns. Real-game parity, one Tiny game, clang StackMod 0.3.5-1: 150 of 150 turns.
+- **A failure that was the test's own doing:** the stock `verify --host-only` first failed, 7 of 8 ensemble games, with "file is encrypted or
+  is not a database" on `Localization-Merged.db`. It ran beside the parity game, and its default localization source is the real game's
+  live cache, which the game was rewriting as it launched (the file's time matches, and the host warned of a journal). Alone it
+  passed, 8 of 8. Not new: `CopyIntoRun` is older than 0.4.1. `verify` with a real game copies the file first; `--host-only` does not.
+- **Tests:** 251 unit tests, with `C5H_INTEGRATION=1`, 4 skipped.
+- **Not in this update:** a fix for that collision.
 - **Timing, and what it could not show:**
   - Clang VP and stock ran on P-cores beside 5 `--sba` games on E-cores. Path of Exile was using about 2 cores when the batch ended,
     and clang VP's base mean was 376 s against 342 s in the batch before it. The pairs all moved the same way (-11 to -19%).
