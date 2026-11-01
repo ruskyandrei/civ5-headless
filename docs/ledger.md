@@ -565,3 +565,42 @@ The host's own history (milestones M0–M6, parity work against the real game) i
 - **Not run for this release:** the real game. The last real-game verify is the one above, on StackMod 0.3.3-1, and another
   session was replacing that install while this one released.
 - **Release:** the user asked for 0.4.0 after the dry run (2026-10-30).
+
+### 2026-11-01: a leaner host, release 0.4.1
+
+- **What it holds:** the full set from the lean-client investigation, with `--sba` off by default as the user chose and the lite
+  explorer switch removed. Commit `94740ee` on branch `lean-client`, host `out/Release/20261101-192454` (`DE45A150`), built from
+  clean sources. Earlier evidence used `hosts/lean-F`, the same source apart from that switch, which stayed off.
+- **Why a patch version:** every game compared stayed the same at default settings, so no behaviour changes.
+- **Why it was tested again:** all 40 whole games of the investigation had `--sba` on, and without it the host's changes reach the
+  C runtime heap that holds the DLL's small blocks. So the shipped setting had not played a whole game.
+- **Identity at default settings against `344BF2F3` (0.4.0):** 32 whole games on 4 DLLs, 12 short, 5 loaded from saves: all
+  identical. 8 of the whole games ran on `74BAE1C5`, the same source before the commit. With `--sba`, 5 of 5 on `DE45A150`.
+- **`verify`, `DE45A150`, `--sba` off:** `--host-only` on stock, clang VP, official VP and StackMod: warn, exit 0, 150 of 150 turns.
+  Warnings: `health.ui-hazards`, and `performance.history` on StackMod because the DLL differed from the previous run.
+- **Real-game parity:** `c5h verify --quick --no-setups --ensemble 0`, one real game, Tiny Continents, 150 turns, the installed mods
+  and clang StackMod 0.3.5-1 (`89B8370A`): 150 of 150 turns, database identical. Chosen over `c5h parity`, which needs a reference
+  recorded with a digest DLL. Warn, exit 0: `setup.pregame`, `health.ui-hazards`, and `statistics.ensemble` from having no ensemble.
+- **A regression found while reviewing the note:** `--checkpoint-extra` runs inside the checkpoint chunk, and one thread for that
+  chunk broke the promise in `docs/probes.md` that an extra's globals are gone at the next call (a global counter gave 1, 2, 3 where
+  0.4.0 gives 1, 1, 1). Fixed in the driver (`6d6eda5`): each call gets its own environment, so the host stays `DE45A150`. On a
+  40-turn stock game with `turn-stats.lua` and three test extras, the rows and fingerprints equal 0.4.0's. Games without extras do not run
+  that code, so the results above stand.
+- **What the mods do with the shared tables:** a scan of the installed MODS, both pinned packs and the game's Lua found no write into
+  `GameInfoTypes` or `GameInfoActions`: only local aliases, VPUI's own local table, and `AssignStartingPlots.lua` rebinding the name.
+- **What the note leaves out, at the user's request:** the explanation of the table and of the identity checks, and `--sba`. The
+  figures and caveats are in this entry.
+- **Tests:** 250 unit tests, 8 skipped; with `C5H_INTEGRATION=1`, 4 skipped.
+- **From a kit of `6d6eda5` with these docs, unpacked, with its own Python and an empty database cache:** `c5h doctor` exit 0. A stock
+  game and an official VP game, 40 turns each, with `turn-stats.lua`: completed with their reports, on `DE45A150`, with fingerprints and
+  extra rows equal to 0.4.0's.
+- **Release:** the user asked for 0.4.1 after reviewing the note (2026-11-01). The kit carries `out/Release/20261101-192454`
+  (`DE45A150`), built at `94740ee`; only the driver fix, docs and the version changed since.
+- **Timing, and what it could not show:**
+  - Clang VP and stock ran on P-cores beside 5 `--sba` games on E-cores. Path of Exile was using about 2 cores when the batch ended,
+    and clang VP's base mean was 376 s against 342 s in the batch before it. The pairs all moved the same way (-11 to -19%).
+  - Official and StackMod on seed p1, also on P-cores, gave wall +2.8% and +1.7% with CPU -1.8% and -0.8%, with repeats differing by
+    up to 8%. They could not be told from noise, so those rows were played again on seeds s3 and s5 on E-cores: official -12 to -16%,
+    StackMod -1 to -6%. The note uses those.
+- **Not in this release:** `patch-D` (the driver keeps file hashes between games), `patch-C`, `lean-4`, `lean-10`.
+- **Not run:** the real game on official or clang VP; a whole real game; whole Large or Huge games; other maps in whole games.

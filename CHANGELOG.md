@@ -2,6 +2,37 @@
 
 Every release of civ5-headless. Each GitHub release has the kit (`civ5-headless-<version>-<commit>.zip`) attached.
 
+## 0.4.1 (2026-11-01)
+
+**Performance Optimisation patch: the same games as 0.4.0, on less memory and mostly in less time.** All in the host; no DLL
+change is needed, and 0.4.0's seeds and baselines still match.
+
+| Whole games, 0.4.0 to 0.4.1, default settings | Mean turns | Game time | Saved | s/turn | Speed | CPU | Peak private memory | Same game |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Vox Populi 5.4.8-9, clang, 5 seeds, each twice | 332 | 376 to 323 s | 53 s | 1.13 to 0.97 | x1.16 | -2.0% | 421 to 272 MiB, -35% | 10 of 10 |
+| Official Vox Populi 5.4.8, 2 seeds, each twice, on E-cores | 370 | 944 to 815 s | 129 s | 2.56 to 2.21 | x1.16 | -0.9% | 391 to 305 MiB, -22% | 4 of 4 |
+| StackMod 0.3.5, 2 seeds, each twice, on E-cores | 325 | 804 to 785 s | 19 s | 2.48 to 2.42 | x1.02 | -1.0% | 515 to 382 MiB, -26% | 4 of 4 |
+| Stock DLL, 1 seed, twice | 408 | 406 to 358 s | 48 s | 1.00 to 0.88 | x1.14 | -10.1% | 179 to 148 MiB, -17% | 2 of 2 |
+| Short: Vox Populi, clang, 15 turns, 2 seeds, each 4 times | 15 | 1.01 to 0.91 s | 0.1 s | 0.07 to 0.06 | x1.11 | -6.3% | 301 to 166 MiB, -45% | 8 of 8 |
+| Short: Vox Populi, clang, 100 turns, 2 seeds, each twice | 100 | 19.3 to 19.2 s | 0.1 s | 0.19 to 0.19 | x1.01 | -2.0% | 364 to 191 MiB, -48% | 4 of 4 |
+
+- **What changed in the host:**
+  - The DLL's `Sleep(1)` yields are removed through its import table; they wait for a UI thread the host does not have.
+  - The DLL's symbols are no longer loaded (`SYMOPT_DEFERRED_LOADS`).
+  - Hooks with no listener skip Lua, and their args objects are reused.
+  - All Lua contexts share one copy of `GameInfoTypes` and `GameInfoActions`, and `--checkpoint-lua` keeps one thread and one
+    compiled chunk for the whole game.
+  - SQLite runs in exclusive mode with mapped reads on the run's own copies, and gives back its startup cache before autoplay.
+  - The ICU data is a read-only file view shared between games, the temp heap is made on first use, and a loaded save keeps one
+    smaller buffer.
+- **What to watch for with other mods and DLLs:**
+  - A mod that writes to `GameInfoTypes` or `GameInfoActions` in one Lua context now changes them for all. The base game, Vox
+    Populi and StackMod do not; other mods have not been checked.
+  - A DLL that keeps a hook's args pointer after `DestroyArgs` would read a reused object. Vox Populi and StackMod do not; other
+    DLLs have not been read.
+  - A file you give the host's `--checkpoint-lua` yourself (through `--host-arg`, or running `civ5headless.exe` directly) now
+    keeps its globals between its runs in a game, and is read only once. `--checkpoint-extra` files work as before.
+
 ## 0.4.0 (2026-10-30)
 
 - **Behaviour change: AI logging is now off by default, and has a switch.** `c5h run --ai-logging on|off`,

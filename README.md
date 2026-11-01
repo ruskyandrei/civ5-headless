@@ -5,7 +5,7 @@ from the Civ V SDK (the stock DLL, Community Patch, Vox Populi or your own) and 
 setup options, several games at a time, much faster than the real game. A verification suite measures how closely the
 headless games represent real Civ V autoplay for your DLL and mods.
 
-Status: 0.4.0, which keeps AI logging off unless you ask for it and can play a save on with new seeds
+Status: 0.4.1, a performance patch that plays the same games as 0.4.0 on about a third less memory with Vox Populi
 ([CHANGELOG.md](CHANGELOG.md)). It was developed in a Vox Populi fork:
 [docs/plan.md](docs/plan.md) has the plan, and [docs/history](docs/history) shows how the host was built and checked
 against the real game.
