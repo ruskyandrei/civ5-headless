@@ -341,6 +341,25 @@ class LoadTest(unittest.TestCase):
                 self.assertFalse(old.ok)
                 self.assertIn('no --sba', old.status['error'])
 
+    def test_no_exclusive_db(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}):
+            tmp = Path(tmp)
+            cfg, save = self.game_kit(tmp)
+            with mock.patch.object(run, 'host_supports', return_value=True):
+                r = run.play(save, 7, cfg=cfg, run='locks', no_exclusive_db=True, no_profiles=True)
+                self.assertTrue(r.ok, r.status.get('error'))
+                self.assertIn('--no-exclusive-db', json.loads((r.dir / 'argv.json').read_text(encoding='utf-8')))
+                self.assertTrue(r.status['noExclusiveDb'])
+                self.assertIn('database locks kept', (r.dir / 'report.html').read_text(encoding='utf-8'))
+                plain = run.play(save, 7, cfg=cfg, run='plain', no_profiles=True, report=False)
+                self.assertNotIn('--no-exclusive-db', json.loads((plain.dir / 'argv.json').read_text(encoding='utf-8')))
+                self.assertNotIn('noExclusiveDb', plain.status)
+            # a host without it: an error, not a game with the locks gone
+            with mock.patch.object(run, 'host_supports', side_effect=lambda exe, option: option != '--no-exclusive-db'):
+                old = run.play(save, 7, cfg=cfg, run='old', no_exclusive_db=True, no_profiles=True, report=False)
+                self.assertFalse(old.ok)
+                self.assertIn('no --no-exclusive-db', old.status['error'])
+
     def test_ai_logging(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'C5H_TEST_PYTHON': sys.executable}), \
                 mock.patch.object(run, 'host_supports', return_value=True), contextlib.redirect_stdout(io.StringIO()):

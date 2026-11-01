@@ -111,6 +111,8 @@ namespace
 		"                       allocations interleaved with the DLL's allocations, and the game DLL rebased\n"
 		"  --sba                a real small-block allocator behind FSBAAllocate (blocks up to 512 bytes), as the real\n"
 		"                       exe has; off: every block from the CRT heap. Long games use a little less CPU\n"
+		"  --no-exclusive-db    keep SQLite's file locks on the run's database copies, so other programs can read them\n"
+		"                       during the game. The same game, a little slower on a DLL that reads the database often\n"
 		"  --known-sha256 <path=hex>  this file's SHA-256 for the reports, so the host need not read it (repeatable)\n"
 		"  --profiles <dir>     newgame: UI emulation profiles (default: profiles\\ next to the exe or above it)\n"
 		"  --no-profiles        newgame: no UI emulation profiles\n"
@@ -383,6 +385,7 @@ namespace
 			else if(a == "--no-addins") o.noAddins = true;
 			else if(a == "--no-dumps") o.noDumps = true;
 			else if(a == "--sba") o.sba = true;
+			else if(a == "--no-exclusive-db") o.noExclusiveDb = true;
 			else if(a == "--save-final") o.saveFinal = true;
 			else if(a == "--no-save-final") o.saveFinal = false;
 			else if(!bHasValue) { fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
@@ -913,9 +916,9 @@ namespace
 		r += "  \"spec\": " + Q(o.specPath) + ",\n";
 		r += "  \"load\": " + LoadJson() + ",\n";
 		r += "  \"saves\": " + SavesJson("    ") + ",\n";
-		r += HHFormat("  \"options\": {\"turns\": %d, \"heapPerturb\": %u, \"frameSkew\": %d, \"smallBlockAllocator\": %s, \"noUiFrame\": %s, \"gameLogging\": %s, \"gameLogFlags\": %d, "
+		r += HHFormat("  \"options\": {\"turns\": %d, \"heapPerturb\": %u, \"frameSkew\": %d, \"smallBlockAllocator\": %s, \"noExclusiveDb\": %s, \"noUiFrame\": %s, \"gameLogging\": %s, \"gameLogFlags\": %d, "
 		              "\"idleUpdates\": %d, \"noMods\": %s, \"noProfiles\": %s, \"noAddins\": %s, \"skipAddins\": [",
-		              o.turns, o.heapPerturb, o.frameSkew, o.sba ? "true" : "false", o.noUiFrame ? "true" : "false", o.gameLogging ? "true" : "false", o.gameLogFlags,
+		              o.turns, o.heapPerturb, o.frameSkew, o.sba ? "true" : "false", o.noExclusiveDb ? "true" : "false", o.noUiFrame ? "true" : "false", o.gameLogging ? "true" : "false", o.gameLogFlags,
 		              o.idleUpdates, o.noMods ? "true" : "false", o.noProfiles ? "true" : "false", o.noAddins ? "true" : "false");
 		for(size_t i = 0; i < o.skipAddins.size(); ++i)
 			r += (i ? ", " : "") + Q(o.skipAddins[i]);

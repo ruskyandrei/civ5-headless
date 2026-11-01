@@ -2,7 +2,7 @@
 run folder.
 
   c5h run (SPEC.json | SAVE.Civ5Save | --load SAVE.Civ5Save) --turns N [--run NAME | --run-dir DIR] [--seeds MAP SYNC]
-          [--autosave none|game|N] [--save-at T]... [--no-save-final] [--sba] [--ai-logging on|off]
+          [--autosave none|game|N] [--save-at T]... [--no-save-final] [--sba] [--no-exclusive-db] [--ai-logging on|off]
           [--dll DLL] [--db DB] [--mods-dir MODS] [--mods-db Civ5ModsDatabase.db | --mod ID[:VER]... | --no-mods]
           [--loc-db DB] [--game-dir DIR] [--exe EXE]
           [--profiles DIR | --no-profiles] [--skip-addin NAME]... [--no-addins]
@@ -70,6 +70,11 @@ cap shared by its games, queue.py); the timings of such a run are not the host's
 --sba gives the DLL a real small-block allocator, as the real exe has: long games use a little less CPU. It moves every
 small block, so use it with a DLL that passes trajectory.heap-perturb (c5h verify). status.json records it
 (smallBlockAllocator).
+
+--no-exclusive-db keeps SQLite's file locks on the run's database copies, so other programs can read db/ during the game.
+Without it they get "database is locked" on the game database until the game ends, though they can copy the file and open
+the copy. The game is the same; a DLL that reads the database often, such as the stock DLL, is about 10% slower. status.json
+records it (noExclusiveDb).
 
 --ai-logging on|off (default: ai_logging in civ5headless.toml, else off) decides whether the DLL builds its AI logs
 (docs/ai-logging.md). Off saves about 30% of a long Vox Populi game. There the same seed plays a different game with it on,
@@ -448,6 +453,15 @@ def sba_host_args(a, exe):
     return ['--sba']
 
 
+def exclusive_db_host_args(a, exe):
+    """The host option that keeps SQLite's file locks, off unless asked for. Raises ValueError with a host without it."""
+    if not getattr(a, 'no_exclusive_db', False):
+        return []
+    if not host_supports(exe, '--no-exclusive-db'):
+        raise ValueError(f'{exe} has no --no-exclusive-db; use a newer host')
+    return ['--no-exclusive-db']
+
+
 def ai_logging_host_args(a, exe, cfg):
     """The host option for AI logging: a's choice, else the configuration's, else off. None when a.host_arg sets the
     logging itself, which wins. Raises ValueError when a host without the option is asked for off; asked for nothing,
@@ -582,6 +596,7 @@ def newgame(a, quiet=False, cfg=None):
         if getattr(a, 'heap_perturb', None): cmd += ['--heap-perturb', str(a.heap_perturb)]
         if getattr(a, 'frame_skew', None): cmd += ['--frame-skew', str(a.frame_skew)]
         cmd += sba_host_args(a, exe)
+        cmd += exclusive_db_host_args(a, exe)
         cmd += ai_logging_host_args(a, exe, cfg)
         cmd += save_host_args(a, exe)
         cmd += detail_host_args(detail, exe)
@@ -704,6 +719,8 @@ def newgame(a, quiet=False, cfg=None):
             status['reseed'] = reseed
         if '--sba' in cmd:
             status['smallBlockAllocator'] = True
+        if '--no-exclusive-db' in cmd:
+            status['noExclusiveDb'] = True
         status['aiLogging'], status['gameLogFlags'] = game_logging_of(cmd)
         if extras:
             status['extras'] = extras
@@ -801,7 +818,7 @@ class Result:
 def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None, db=None, mods_dir=None,
          mods_db=None, mods=None, no_mods=False, loc_db=None, game_dir=None, exe=None, profiles=None, no_profiles=False,
          skip_addins=(), no_addins=False, fingerprint=False, lua_probes=(), checkpoint_extras=(), final_extras=(),
-         heap_perturb=None, frame_skew=None, sba=False, ai_logging=None,
+         heap_perturb=None, frame_skew=None, sba=False, no_exclusive_db=False, ai_logging=None,
          diagnostics=0, improved_mask=None, ab_role=None, checkpoint_every=1, max_seconds=21600, stall_seconds=900,
          max_memory_mb=3500, affinity=None, low_priority=False, cpu_limit=None, efficiency_mode=False, detail=None,
          report=True, prune=False, host_args=(), poll=1.0, quiet=True, load=None, autosave=None, save_at=(), save_final=True):
@@ -818,7 +835,7 @@ def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None,
     fingerprint: True, or dict(every=K, turns=[...], split=N), runs the Lua fingerprint probe before lua_probes;
     lua_probes: files for the host's --lua-probe; checkpoint_extras, final_extras: Lua files whose results go into
     the checkpoints and extra/NAME.jsonl, and into extra/NAME-final.json (docs/probes.md);
-    heap_perturb, frame_skew, sba: the host options of the same name; ai_logging: 'on' or 'off' (or True or False), default
+    heap_perturb, frame_skew, sba, no_exclusive_db: the host options of the same name; ai_logging: 'on' or 'off' (or True or False), default
     the configuration's, else off (docs/ai-logging.md; a logging option in host_args wins);
     detail: 'summary', 'standard' (default) or 'full', what the run folder keeps (prune=True, the old option, is
     'standard'); report: write report.html; host_args: further host arguments. The other keywords are the c5h run
@@ -851,7 +868,7 @@ def play(spec, turns, *, run=None, run_dir=None, cfg=None, seeds=None, dll=None,
                         skip_addin=list(skip_addins or []), no_addins=no_addins, fingerprint=fingerprint,
                         lua_probe=list(lua_probes or []), checkpoint_extra=list(checkpoint_extras or []),
                         final_extra=list(final_extras or []),
-                        heap_perturb=heap_perturb, frame_skew=frame_skew, sba=bool(sba), ai_logging=ai_logging,
+                        heap_perturb=heap_perturb, frame_skew=frame_skew, sba=bool(sba), no_exclusive_db=bool(no_exclusive_db), ai_logging=ai_logging,
                         diagnostics=int(diagnostics or 0),
                         improved_mask=improved_mask, ab_role=ab_role, checkpoint_every=int(checkpoint_every or 1),
                         maximum_seconds=max_seconds, stall_seconds=stall_seconds, max_memory_mb=max_memory_mb or None,
@@ -905,6 +922,8 @@ def add_arguments(n):
     n.add_argument('--frame-skew', type=int, help='an extra engine update before every K-th one')
     n.add_argument('--sba', action='store_true', help="a real small-block allocator for the DLL, as the real exe has (long "
                    'games use a little less CPU; for DLLs that pass trajectory.heap-perturb)')
+    n.add_argument('--no-exclusive-db', action='store_true', help="keep SQLite's file locks on the run's database copies, so "
+                   'other programs can read them during the game (the same game; a DLL that reads the database often is slower)')
     n.add_argument('--ai-logging', choices=['on', 'off'], help="the DLL's AI logs (default: ai_logging in civ5headless.toml, "
                    'else off): off saves about 30%% of a long Vox Populi game, and there the same seed plays a different game '
                    'with it on (docs/ai-logging.md)')

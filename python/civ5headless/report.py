@@ -709,6 +709,8 @@ def _setup_rows(m, ps):
             options.append(f'{k} {host_opts[k]}')
     if st.get('smallBlockAllocator') or host_opts.get('smallBlockAllocator'):
         options.append('small-block allocator')
+    if st.get('noExclusiveDb') or host_opts.get('noExclusiveDb'):
+        options.append('database locks kept')
     if isinstance(s.get('diagnosticsLevel'), int) and s['diagnosticsLevel'] > 0:
         options.append(f"diagnostics {s['diagnosticsLevel']}")
     if s.get('abRole'):

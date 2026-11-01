@@ -32,6 +32,11 @@ change is needed, and 0.4.0's seeds and baselines still match.
     DLLs have not been read.
   - A file you give the host's `--checkpoint-lua` yourself (through `--host-arg`, or running `civ5headless.exe` directly) now
     keeps its globals between its runs in a game, and is read only once. `--checkpoint-extra` files work as before.
+  - While a game runs, other programs get "database is locked" if they open its `db\built.db`, though they can copy the file and
+    open the copy. `--no-exclusive-db` (queue key `noExclusiveDb`) lets them read it directly. The game is the same; a long stock
+    game takes about 10% more CPU, and Vox Populi shows no clear difference.
+- **The kit was replaced on 2026-11-01, the day of release, to add `--no-exclusive-db`.** The first kit,
+  `civ5-headless-0.4.1-7344df884.zip`, does not have that switch and is otherwise the same.
 
 ## 0.4.0 (2026-10-30)
 

@@ -185,6 +185,7 @@ configuration. Useful options:
 | `--cpu-limit PERCENT`, `--efficiency-mode` | quieter background runs: a hard cap at PERCENT of one core (the time limits stretch to match), and Windows efficiency mode (EcoQoS, idle priority); the game is the same, only slower ([running.md](running.md#running-in-the-background)) |
 | `--heap-perturb N`, `--frame-skew K` | the verification suite's address and frame-count checks |
 | `--sba` | off by default: a real small-block allocator for the DLL (about 3% less CPU on a long Vox Populi game, none on a short one); for DLLs that pass `trajectory.heap-perturb`. `status.json` records it |
+| `--no-exclusive-db` | lets other programs read the run's game database during the game, at some speed on a DLL that reads it often; without it they get "database is locked", but can copy the file and open the copy. `status.json` records it |
 | `--ai-logging on\|off` | whether the DLL builds its AI logs; default `ai_logging` in `civ5headless.toml`, else off. Off is faster, and with Vox Populi the same seed plays a different game with it on ([ai-logging.md](ai-logging.md)). `status.json` records it (`aiLogging`, `gameLogFlags`) |
 | `--detail summary\|standard\|full` | what the run folder keeps ([Run folders](#run-folders)); default `standard`. `--prune` is the old name of `standard` |
 | `--no-report` | no `report.html` (`c5h report RUN` writes it later) |
@@ -341,7 +342,7 @@ c5h queue report QUEUE.json
   `{"every": K, "turns": [...], "split": N}`), `diagnostics`, `improvedMask`, `abRole`, `checkpointEvery`,
   `maxSeconds`, `stallSeconds`, `maxMemoryMB`, `detail` (default `standard`; the old `prune: false` is `full`),
   `report` (default on), `hostArgs`, `luaProbes`, `checkpointExtras`, `finalExtras`, `lowPriority` (default on),
-  `cpuLimit`, `efficiencyMode`, `smallBlockAllocator` (`--sba`), `aiLogging` (`"on"` or `"off"`), `load` (a save instead of `spec`; `seeds` are then new
+  `cpuLimit`, `efficiencyMode`, `smallBlockAllocator` (`--sba`), `noExclusiveDb` (`--no-exclusive-db`), `aiLogging` (`"on"` or `"off"`), `load` (a save instead of `spec`; `seeds` are then new
   seeds for the game, [saves.md](saves.md#a-save-as-a-baseline)),
   `autosave`, `saveAt`, `saveFinal`) can be set in `defaults`, a variant or a job. Examples are in
   `examples/queues/`.

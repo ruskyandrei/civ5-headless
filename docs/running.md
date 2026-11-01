@@ -440,7 +440,7 @@ c5h queue status my-queue.json
   `noAddins`, `fingerprint` (`true` or `{"every": K, "turns": [...], "split": N}`), `luaProbes`,
   `checkpointExtras`, `finalExtras`, `seeds`,
   `checkpointEvery`, `maxSeconds`, `stallSeconds`, `maxMemoryMB`, `detail`, `report`, `lowPriority`, `cpuLimit`,
-  `efficiencyMode`, `smallBlockAllocator` (`--sba`), `aiLogging` (`"on"` or `"off"`, the default, [ai-logging.md](ai-logging.md)), `hostArgs`,
+  `efficiencyMode`, `smallBlockAllocator` (`--sba`), `noExclusiveDb` (`--no-exclusive-db`), `aiLogging` (`"on"` or `"off"`, the default, [ai-logging.md](ai-logging.md)), `hostArgs`,
   `load` (a save instead of `spec`; a `spec` that is a `.Civ5Save` is loaded too; its `seeds` are then new seeds for the
   game, [saves.md](saves.md#a-save-as-a-baseline)), `autosave`, `saveAt`, `saveFinal` (default `true`).
 - Paths in the file are relative to the file. Run folders go to `"out"` (default `runs\<queue file name>`).
@@ -607,6 +607,7 @@ For DLL and host developers; regular runs do not need them.
 | `--frame-skew K` | an extra engine update before every K-th one: a game that changes is frame-rate dependent |
 | `--heap-perturb SEED` | moves the DLL and the heap: a game that changes depends on memory addresses |
 | `--sba` | off by default: a real small-block allocator for the DLL, as the real exe has (blocks up to 512 bytes), which reserves address space as it needs it. On a long Vox Populi game about 3% less CPU than without it; none on a short one. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records it |
+| `--no-exclusive-db` | keeps SQLite's file locks on the run's database copies, so other programs can read `db\` during the game. Without it, opening the game database (`db\built.db`) from another program fails with "database is locked" until the game ends; copying the file and opening the copy works. The game is the same. A DLL that reads the database often runs slower: about 10% on a long stock game, no clear difference on Vox Populi. `status.json` records it (`noExclusiveDb`) |
 | `--ai-logging on\|off` | whether the DLL builds its AI logs. Default: `ai_logging` in `civ5headless.toml`, else off. Off saves about 30% of a 150-turn Vox Populi game, and there the same seed plays a different game with it on. `status.json` records it (`aiLogging`, `gameLogFlags`), and the report shows it ([ai-logging.md](ai-logging.md)) |
 | `--host-arg ARG` | pass an option straight to `civ5headless.exe` (repeatable), e.g. `--host-arg=--no-game-logging`. A logging option here wins over `--ai-logging` |
 | `--exe`, `--game-dir`, `--loc-db` | another host build, game folder or localization database |

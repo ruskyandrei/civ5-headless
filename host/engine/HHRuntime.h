@@ -54,6 +54,7 @@ struct HHOptions
 	__int64 reseedMap;       // loadgame: map seed after the load (-1: the save's)
 	__int64 reseedSync;      // loadgame: sync seed and game generator after the load (-1: the save's)
 	bool sba;                // the small-block allocator (engine/HHExports.cpp); off: every block from the CRT heap
+	bool noExclusiveDb;      // the run's database copies keep SQLite's file locks, so other programs can read them
 	std::string profilesDir;              // UI emulation profiles (default: HHDefaultProfilesDir)
 	bool noProfiles;                      // no UI emulation profiles at all
 	std::vector<std::string> skipAddins;  // InGameUIAddin files not to run (name with or without extension)
@@ -69,7 +70,7 @@ struct HHOptions
 	std::vector<int> saveAt;              // save at the autosave point of these turns
 	bool saveFinal;                       // save once autoplay has ended (default; --no-save-final: not)
 	HHOptions() : language("en_US"), strict(false), verbose(false), gameLogging(false), noGameLogging(false), freeLibrary(true),
-		noMods(false), luaDebugLibrary(true), exeSeed(-1), crtSrand(-1), reseedMap(-1), reseedSync(-1), sba(false), fpuPrecision(0), crtSse2(-1), turns(0), noUiFrame(false), randLog(0), gameLogFlags(15), heapPerturb(0), pregameTurnTimer(-1), idleUpdates(10), frameSkew(0), checkpointEvery(1), dumpFrom(-1), dumpTo(-1),
+		noMods(false), luaDebugLibrary(true), exeSeed(-1), crtSrand(-1), reseedMap(-1), reseedSync(-1), sba(false), noExclusiveDb(false), fpuPrecision(0), crtSse2(-1), turns(0), noUiFrame(false), randLog(0), gameLogFlags(15), heapPerturb(0), pregameTurnTimer(-1), idleUpdates(10), frameSkew(0), checkpointEvery(1), dumpFrom(-1), dumpTo(-1),
 		noProfiles(false), noAddins(false), noDumps(false), autosaveTurns(0), saveFinal(true) {}
 };
 
