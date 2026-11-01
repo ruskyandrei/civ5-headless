@@ -29,7 +29,7 @@ exe, gameDir, profiles, noProfiles, skipAddins, noAddins, fingerprint (true, or 
 "split": N}), seeds ({map, sync} or [map, sync]), diagnostics, improvedMask, abRole, checkpointEvery, maxSeconds, stallSeconds,
 maxMemoryMB, detail (summary, standard (default) or full; the old prune: false is full), report (default true),
 hostArgs, luaProbes, checkpointExtras, finalExtras (Lua files, docs/probes.md), heapPerturb, frameSkew,
-smallBlockAllocator (the c5h run option --sba), aiLogging ("on" or "off", as --ai-logging; a logging option in hostArgs
+smallBlockAllocator (the c5h run option --sba), noExclusiveDb (--no-exclusive-db), aiLogging ("on" or "off", as --ai-logging; a logging option in hostArgs
 wins), lowPriority (default true), cpuLimit (percent of one core), efficiencyMode, autosave (none (default), game or N), saveAt [turns],
 saveFinal (default true); they are the c5h run options of the same name (a spec that is a .Civ5Save is a load).
 Paths left out (dll, modsDir, modsDb, locDb, exe, gameDir, profiles, db) come from the configuration (c5h doctor);
@@ -190,7 +190,7 @@ def job_args(job, folder, inputs, affinity, parent_job=None, cpu_share=None):
                            fingerprint=job.get('fingerprint'), lua_probe=job.get('luaProbes'),
                            checkpoint_extra=job.get('checkpointExtras'), final_extra=job.get('finalExtras'),
                            heap_perturb=job.get('heapPerturb'),
-                           frame_skew=job.get('frameSkew'), sba=bool(job.get('smallBlockAllocator')), ai_logging=job.get('aiLogging'),
+                           frame_skew=job.get('frameSkew'), sba=bool(job.get('smallBlockAllocator')), no_exclusive_db=bool(job.get('noExclusiveDb')), ai_logging=job.get('aiLogging'),
                            diagnostics=int(job.get('diagnostics') or 0), improved_mask=job.get('improvedMask'), ab_role=job.get('abRole'),
                            checkpoint_every=int(job.get('checkpointEvery') or 1), stall_seconds=job.get('stallSeconds'),
                            max_memory_mb=job.get('maxMemoryMB') or None, affinity=affinity, detail=job_detail(job),

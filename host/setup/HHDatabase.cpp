@@ -152,10 +152,12 @@ namespace
 
 	// A copy in the run folder is this run's alone, so it needs no file locks: without this every statement checks for a hot
 	// journal, locks and unlocks. And its pages come through a mapping, not one ReadFile per 1 KB page. What a query answers
-	// depends on neither. 128 MB is more than the databases have; it only caps the mapping.
+	// depends on neither. 128 MB is more than the databases have; it only caps the mapping. --no-exclusive-db keeps the locks,
+	// because once the DLL has written to it, exclusive mode shuts every other program out of the game database until the run ends.
 	void ThisRunsAlone(Database::Connection& kDb)
 	{
-		Pragma(kDb, "PRAGMA locking_mode=EXCLUSIVE");
+		if(!HHGetOptions().noExclusiveDb)
+			Pragma(kDb, "PRAGMA locking_mode=EXCLUSIVE");
 		Pragma(kDb, "PRAGMA mmap_size=134217728");
 	}
 
