@@ -133,7 +133,8 @@ different games from turn 37 on the one seed tried, and the clang build took 28%
 **One known exception: the official Vox Populi 5.4.8 DLL (`262AEE88`) does not always repeat.** On the one seed tried, the same
 command played one of two games, which part at turn 118, with AI logging on or off. How often depends on the length of the run
 folder's path: 32 of 216 games at one length, 1 of 99 at others. AFL, a later build of Vox Populi, showed none in 64 games on
-that seed, and the stock DLL repeated in its verify run. The cause is not known. `c5h verify` fails on it, so run it on your DLL
+that seed, and the stock DLL repeated in its verify run. With `--sba` the other game did not appear, in 64 games at the length where
+it was commonest, on that one seed. The cause is not known. `c5h verify` fails on it, so run it on your DLL
 before you read much into a difference between two games.
 
 - A spec without seeds gets fresh random ones. They are recorded in the run folder (`spec-resolved.json`), and
@@ -605,7 +606,7 @@ For DLL and host developers; regular runs do not need them.
 |---|---|
 | `--frame-skew K` | an extra engine update before every K-th one: a game that changes is frame-rate dependent |
 | `--heap-perturb SEED` | moves the DLL and the heap: a game that changes depends on memory addresses |
-| `--sba` | a real small-block allocator for the DLL, as the real exe has (blocks up to 512 bytes): about 3% less CPU on a 150-turn game, none on a short one. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records it |
+| `--sba` | off by default: a real small-block allocator for the DLL, as the real exe has (blocks up to 512 bytes), which reserves address space as it needs it. On a long Vox Populi game about 3% less CPU than without it; none on a short one. It moves every small block, so use it with a DLL that passes `trajectory.heap-perturb`. `status.json` records it |
 | `--ai-logging on\|off` | whether the DLL builds its AI logs. Default: `ai_logging` in `civ5headless.toml`, else off. Off saves about 30% of a 150-turn Vox Populi game, and there the same seed plays a different game with it on. `status.json` records it (`aiLogging`, `gameLogFlags`), and the report shows it ([ai-logging.md](ai-logging.md)) |
 | `--host-arg ARG` | pass an option straight to `civ5headless.exe` (repeatable), e.g. `--host-arg=--no-game-logging`. A logging option here wins over `--ai-logging` |
 | `--exe`, `--game-dir`, `--loc-db` | another host build, game folder or localization database |

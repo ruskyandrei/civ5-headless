@@ -184,7 +184,7 @@ configuration. Useful options:
 | `--affinity MASK`, `--low-priority` | CPU pinning, below-normal priority |
 | `--cpu-limit PERCENT`, `--efficiency-mode` | quieter background runs: a hard cap at PERCENT of one core (the time limits stretch to match), and Windows efficiency mode (EcoQoS, idle priority); the game is the same, only slower ([running.md](running.md#running-in-the-background)) |
 | `--heap-perturb N`, `--frame-skew K` | the verification suite's address and frame-count checks |
-| `--sba` | a real small-block allocator for the DLL (about 3% less CPU on a 150-turn game, none on a short one); for DLLs that pass `trajectory.heap-perturb`. `status.json` records it |
+| `--sba` | off by default: a real small-block allocator for the DLL (about 3% less CPU on a long Vox Populi game, none on a short one); for DLLs that pass `trajectory.heap-perturb`. `status.json` records it |
 | `--ai-logging on\|off` | whether the DLL builds its AI logs; default `ai_logging` in `civ5headless.toml`, else off. Off is faster, and with Vox Populi the same seed plays a different game with it on ([ai-logging.md](ai-logging.md)). `status.json` records it (`aiLogging`, `gameLogFlags`) |
 | `--detail summary\|standard\|full` | what the run folder keeps ([Run folders](#run-folders)); default `standard`. `--prune` is the old name of `standard` |
 | `--no-report` | no `report.html` (`c5h report RUN` writes it later) |
@@ -509,6 +509,9 @@ phases compare like with like only on average.)
 | host, T100 | 270 to 283 MB | about 280 MB |
 | host, T250 | 327 MB | 326 MB (peak virtual 506 MB) |
 | real game, T250 | 1,763 to 1,825 MB | 2,046 to 2,080 MB (peak virtual 2.9 GB) |
+
+These figures are from before 0.4.1, which lowers the host's peaks by about a third on a Vox Populi game
+([CHANGELOG.md](../CHANGELOG.md)).
 
 Memory never limits parallelism: 24 games need under 8 GB. The default commit limit of 3,500 MB per game only
 catches runaway runs.
