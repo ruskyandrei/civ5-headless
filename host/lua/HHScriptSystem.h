@@ -29,20 +29,26 @@ public:
 
 	// Pushes every argument onto a Lua stack; returns the number pushed.
 	int PushAll(lua_State* L) const;
+	// Empty again for the next hook, keeping its memory.
+	void Clear();
 
 private:
+	// No string in here: the DLL pushes millions of numbers, so adding an Arg has to stay cheap.
 	struct Arg
 	{
 		ArgType eType;
-		bool b;
-		int i;
-		float f;
-		std::string s;
-		Arg() : eType(ARGTYPE_NONE), b(false), i(0), f(0.f) {}
+		union
+		{
+			bool b;
+			int i;
+			float f;
+			unsigned int iString;  // index in m_strings
+		};
 	};
 	unsigned int Add(const Arg& a);
 	const Arg* At(unsigned int argIndex) const;
 	std::vector<Arg> m_args;
+	std::vector<std::string> m_strings;
 };
 
 // One Lua error, for the run report.
@@ -84,6 +90,8 @@ public:
 	// The game runs with EnableLuaDebugLibrary = 0: only the boot-time VP_LUAAPI thread reaches debug
 	// (its chunk keeps debug.getinfo in a local). Removes debug from _G once that thread is done.
 	void HideDebugLibrary();
+	// The prelude calls this when a GameEvents listener list changes.
+	void GameEventListenersChanged() { m_bListenedEventsStale = true; }
 	// Runs the GameEvents listeners of szName (mode: hook, testall, testany, accum); returns handled.
 	bool DispatchGameEvent(const char* szName, ICvEngineScriptSystemArgs1* pArgs, const char* szMode, double& dValue);
 	// Closes the Lua state (runs every __gc, some of which are DLL code): call while the
@@ -118,6 +126,7 @@ public:
 
 private:
 	bool ProtectedCall(lua_State* L, int nArgs, int nRet, const char* szWhat);
+	bool HasGameEventListeners(const char* szName);
 	lua_State* m_L;
 	std::map<lua_State*, int> m_threads; // thread -> registry reference
 	void RecordInclude(const std::string& strPath);
@@ -129,4 +138,7 @@ private:
 	ICvScriptSystemUtility1* m_pUtility;
 	std::vector<std::string> m_loadedFiles;        // every file loaded, in order
 	std::map<std::string, int> m_includeCounts;    // "context|name" -> include calls
+	std::vector<HHScriptArgs*> m_freeArgs;         // DestroyArgs keeps them for CreateArgs
+	std::vector<std::string> m_listenedEvents;     // the GameEvents that have a listener, usually few
+	bool m_bListenedEventsStale;
 };

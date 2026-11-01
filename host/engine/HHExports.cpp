@@ -14,7 +14,7 @@
 //   code reads directly: lock at +0x00 (16-byte aligned), m_pMemHead +0x10,
 //   m_uiCurrentOffset +0x14, m_uiCapacity +0x18, m_dwFlags +0x1c. Allocate bumps the offset
 //   and returns NULL when full (callers then fall back to the heap); the last DeAllocate
-//   resets the offset. The host provides a real 8 MB block.
+//   resets the offset. The host provides a real 8 MB block, on the first GetTempHeap: VP never asks.
 // - FStringA/W_GetStringInitData return the shared empty-string header (all zero, then the
 //   terminator); the server's are zero-initialised statics too.
 // - GetLogFileMgr / PeekLogFileMgr return the FILogFileMgr; GetFileSystemMgr the
@@ -166,20 +166,37 @@ namespace
 	volatile LONG s_lSBAPreventCreation = 0;
 
 	// --sba: a real small-block allocator, as the real exe has one: size classes in 16-byte steps up to 512 bytes, 64 KB
-	// pages out of one reserved range, LIFO free lists. A page belongs to one size class for good. When the range is used
-	// up, or could not be reserved, FSBAAllocate answers NULL and the blocks come from the CRT heap, as without --sba.
-	const size_t kSbaMax = 512, kSbaStep = 16, kSbaPage = 65536, kSbaReserve = 640u * 1024 * 1024;
+	// pages out of chunks reserved as they are needed, LIFO free lists. A page belongs to one size class for good. When no chunk
+	// can be reserved, FSBAAllocate answers NULL and the blocks come from the CRT heap, as without --sba.
+	const size_t kSbaMax = 512, kSbaStep = 16, kSbaPage = 65536, kSbaChunk = 16u * 1024 * 1024;
 	struct SbaNode { SbaNode* pNext; };
 	SbaNode* s_apSbaFree[kSbaMax / kSbaStep + 1];
 	BYTE* s_apSbaCur[kSbaMax / kSbaStep + 1];
 	BYTE* s_apSbaEnd[kSbaMax / kSbaStep + 1];
-	BYTE s_aSbaClass[kSbaReserve / kSbaPage];
-	BYTE* s_pSbaBase = NULL;
+	BYTE s_aSbaClass[65536];   // by address / kSbaPage: the size class of a page of ours, 0 for every other address
+	bool s_bSbaOn = false;
 	BYTE* s_pSbaNext = NULL;
+	BYTE* s_pSbaEnd = NULL;
 	volatile LONG s_lSbaLock = 0;
 	inline void SbaLock() { while(InterlockedExchange(&s_lSbaLock, 1)) YieldProcessor(); }
 	inline void SbaUnlock() { s_lSbaLock = 0; }
-	inline bool SbaOwns(void* p) { return s_pSbaBase && (BYTE*)p >= s_pSbaBase && (BYTE*)p < s_pSbaBase + kSbaReserve; }
+	inline bool SbaOwns(void* p) { return s_aSbaClass[(size_t)p / kSbaPage] != 0; }
+	BYTE* SbaNewPage(size_t k)
+	{
+		if(s_pSbaNext == s_pSbaEnd)
+		{
+			s_pSbaNext = (BYTE*)VirtualAlloc(NULL, kSbaChunk, MEM_RESERVE, PAGE_READWRITE);
+			s_pSbaEnd = s_pSbaNext ? s_pSbaNext + kSbaChunk : NULL;
+			if(!s_pSbaNext)
+				return NULL;
+		}
+		if(!VirtualAlloc(s_pSbaNext, kSbaPage, MEM_COMMIT, PAGE_READWRITE))
+			return NULL;
+		s_aSbaClass[(size_t)s_pSbaNext / kSbaPage] = (BYTE)k;
+		BYTE* pPage = s_pSbaNext;
+		s_pSbaNext += kSbaPage;
+		return pPage;
+	}
 	void* SbaAllocate(size_t nSize)
 	{
 		if(nSize > kSbaMax)
@@ -194,14 +211,12 @@ namespace
 		}
 		else
 		{
-			if(s_apSbaCur[k] == s_apSbaEnd[k] && s_pSbaNext < s_pSbaBase + kSbaReserve &&
-			   VirtualAlloc(s_pSbaNext, kSbaPage, MEM_COMMIT, PAGE_READWRITE))
-			{
-				s_aSbaClass[(s_pSbaNext - s_pSbaBase) / kSbaPage] = (BYTE)k;
-				s_apSbaCur[k] = s_pSbaNext;
-				s_apSbaEnd[k] = s_pSbaNext + kSbaPage / (k * kSbaStep) * (k * kSbaStep);
-				s_pSbaNext += kSbaPage;
-			}
+			if(s_apSbaCur[k] == s_apSbaEnd[k])
+				if(BYTE* pPage = SbaNewPage(k))
+				{
+					s_apSbaCur[k] = pPage;
+					s_apSbaEnd[k] = pPage + kSbaPage / (k * kSbaStep) * (k * kSbaStep);
+				}
 			if(s_apSbaCur[k] != s_apSbaEnd[k])
 			{
 				p = s_apSbaCur[k];
@@ -215,7 +230,7 @@ namespace
 	{
 		if(!SbaOwns(p))
 			return false;
-		const size_t k = s_aSbaClass[((BYTE*)p - s_pSbaBase) / kSbaPage];
+		const size_t k = s_aSbaClass[(size_t)p / kSbaPage];
 		SbaLock();
 		SbaNode* pNode = (SbaNode*)p;
 		pNode->pNext = s_apSbaFree[k];
@@ -228,19 +243,12 @@ namespace
 void HHExportsInit()
 {
 	memset(&s_tempHeap, 0, sizeof(s_tempHeap));
-	s_tempHeap.pMemHead = (BYTE*)_aligned_malloc(kTempHeapBytes, 16);
-	s_tempHeap.uiCapacity = s_tempHeap.pMemHead ? kTempHeapBytes : 0;
 	memset(&s_stringAInit, 0, sizeof(s_stringAInit));
 	memset(&s_stringWInit, 0, sizeof(s_stringWInit));
-	if(HHGetOptions().sba && !s_pSbaBase)
+	if(HHGetOptions().sba && !s_bSbaOn)
 	{
-		s_pSbaBase = (BYTE*)VirtualAlloc(NULL, kSbaReserve, MEM_RESERVE, PAGE_READWRITE);
-		s_pSbaNext = s_pSbaBase;
-		if(s_pSbaBase)
-			HHLog("small-block allocator on: blocks up to %u bytes", (unsigned)kSbaMax);
-		else
-			HHLogError("small-block allocator: cannot reserve %u MB (error %lu); every block comes from the CRT heap",
-			           (unsigned)(kSbaReserve / (1024 * 1024)), GetLastError());
+		s_bSbaOn = true;
+		HHLog("small-block allocator on: blocks up to %u bytes", (unsigned)kSbaMax);
 	}
 	const unsigned int uSeed = HHGetOptions().heapPerturb;
 	if(uSeed && !s_bPerturb)
@@ -330,7 +338,7 @@ extern "C"
 		ExportHit(EX_FSBAAllocate);
 		if(s_bPerturb)
 			PerturbStep();
-		return s_pSbaBase ? SbaAllocate(nSize) : NULL;
+		return s_bSbaOn ? SbaAllocate(nSize) : NULL;
 	}
 	bool __cdecl FSBADeallocate(void* pBlock)
 	{
@@ -353,18 +361,18 @@ extern "C"
 		ExportHit(EX_FSBAIsSmallBlock);
 		if(!SbaOwns(pBlock))
 			return false;
-		stSize = (size_t)s_aSbaClass[((BYTE*)pBlock - s_pSbaBase) / kSbaPage] * kSbaStep;
+		stSize = (size_t)s_aSbaClass[(size_t)pBlock / kSbaPage] * kSbaStep;
 		return true;
 	}
 	bool __cdecl FSBAHasAllocatorForSize(size_t tSize)
 	{
 		ExportHit(EX_FSBAHasAllocatorForSize);
-		return s_pSbaBase && tSize <= kSbaMax;
+		return s_bSbaOn && tSize <= kSbaMax;
 	}
 	size_t __cdecl FSBAGetMaxAllocatorSize()
 	{
 		ExportHit(EX_FSBAGetMaxAllocatorSize);
-		return s_pSbaBase ? kSbaMax : 0;
+		return s_bSbaOn ? kSbaMax : 0;
 	}
 	bool __cdecl FSBAPreventCreation(bool bState)
 	{
@@ -406,6 +414,11 @@ extern "C"
 	void* __cdecl GetTempHeap()
 	{
 		ExportHit(EX_GetTempHeap);
+		if(!s_tempHeap.pMemHead)
+		{
+			s_tempHeap.pMemHead = (BYTE*)_aligned_malloc(kTempHeapBytes, 16);
+			s_tempHeap.uiCapacity = s_tempHeap.pMemHead ? kTempHeapBytes : 0;
+		}
 		return &s_tempHeap;
 	}
 

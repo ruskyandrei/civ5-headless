@@ -71,11 +71,11 @@ extern "C" {
 #include "LuaExposures.h"
 
 // Stub support for the generated bases in gen/HHStubs.gen.h.
-void HHStubHit(const char* szName);
+long* HHStubCounter(const char* szName);
 long* HHImplCounter(const char* szName);
-#define HH_STUB_CALL(name) HHStubHit(name)
 // One counter pointer per call site: the first call registers the method, the others only count (the engine calls come
 // by the hundred thousand).
+#define HH_STUB_CALL(name) do { static long* s_pHHCount = NULL; if(s_pHHCount) ++*s_pHHCount; else s_pHHCount = HHStubCounter(name); } while(0)
 #define HH_IMPL_CALL(name) do { static long* s_pHHCount = NULL; if(s_pHHCount) ++*s_pHHCount; else s_pHHCount = HHImplCounter(name); } while(0)
 template<class T> T HHStubDefault() { return T(); }
 

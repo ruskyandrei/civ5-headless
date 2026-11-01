@@ -64,6 +64,13 @@ namespace
 		return 1;
 	}
 
+	// __HHGameEventsChanged(): the prelude has changed a GameEvents listener list.
+	int HHLuaGameEventsChanged(lua_State* L)
+	{
+		static_cast<HHScriptSystem*>(lua_touserdata(L, lua_upvalueindex(1)))->GameEventListenersChanged();
+		return 0;
+	}
+
 	// UI.IsLoadedGame(): true once a save has been loaded.
 	int HHLuaIsLoadedGame(lua_State* L)
 	{
@@ -388,6 +395,7 @@ namespace
 		"-- every listener runs, in registration order; a raising listener is logged and does not vote;\n"
 		"-- handled = at least one listener. __HHGameEventListeners[name] is the listener list.\n"
 		"__HHGameEventListeners = {}\n"
+		"__HHGameEventsChanged()\n"
 		"local function gameEventCall(name, mode, init, ...)\n"
 		"  local list = __HHGameEventListeners[name]\n"
 		"  if list == nil or #list == 0 then return false, init end\n"
@@ -410,11 +418,11 @@ namespace
 		"  __HHGameEventListeners[name] = __HHGameEventListeners[name] or {}\n"
 		"  local ev = {}\n"
 		"  -- Add/Remove accept both GameEvents.X.Add(f) and GameEvents.X:Add(f).\n"
-		"  ev.Add = function(a, b) local f = (a == ev) and b or a; local l = __HHGameEventListeners[name]; l[#l + 1] = f\n"
+		"  ev.Add = function(a, b) local f = (a == ev) and b or a; local l = __HHGameEventListeners[name]; l[#l + 1] = f; __HHGameEventsChanged()\n"
 		"    recordListener('GameEvents', name, callerEnv()) end\n"
 		"  ev.Remove = function(a, b) local f = (a == ev) and b or a; local l = __HHGameEventListeners[name]\n"
-		"    for i = #l, 1, -1 do if l[i] == f then table.remove(l, i) end end end\n"
-		"  ev.RemoveAll = function() __HHGameEventListeners[name] = {} end\n"
+		"    for i = #l, 1, -1 do if l[i] == f then table.remove(l, i) end end; __HHGameEventsChanged() end\n"
+		"  ev.RemoveAll = function() __HHGameEventListeners[name] = {}; __HHGameEventsChanged() end\n"
 		"  ev.Count = function() return #__HHGameEventListeners[name] end\n"
 		"  ev.Call = function(...) local h, v = gameEventCall(name, 'hook', false, ...) return v end\n"
 		"  setmetatable(ev, {__call = function(self, ...) return ev.Call(...) end})\n"
@@ -564,6 +572,9 @@ bool HHLuaRegisterEngineGlobals(HHScriptSystem& kScripts, HHVfs& kVfs, ICvPreGam
 		{ NULL, NULL }
 	};
 	RegisterWithUpvalue(L, "Modding", kModding, &kVfs);
+	lua_pushlightuserdata(L, &kScripts);
+	lua_pushcclosure(L, HHLuaGameEventsChanged, 1);
+	lua_setglobal(L, "__HHGameEventsChanged");
 	// UI.IsLoadedGame of the stub UI contexts (kUIContextLua).
 	lua_pushcfunction(L, HHLuaIsLoadedGame);
 	lua_setglobal(L, "__HHIsLoadedGame");

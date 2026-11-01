@@ -207,7 +207,8 @@ namespace
 		}
 		z.next_in = in.empty() ? NULL : (unsigned char*)&in[0];
 		z.avail_in = (unsigned int)in.size();
-		raw.resize(std::max((size_t)1 << 20, in.size() * 40));
+		// A body is 14 to 20 times its compressed size; the buffer stays until the load ends, so it should not be much larger.
+		raw.resize(std::max((size_t)1 << 20, in.size() * 24));
 		size_t used = 0;
 		bool bOk = true;
 		for(;;)
@@ -841,7 +842,8 @@ bool HHLoadSavedGame(const std::string& strPath, HHNewGameInterfaces& kIf, HHNew
 	s_bLoaded = true;
 	if(kIf.pDbUtil)
 		HH_STEP("CacheGameDatabaseData()", kIf.pDbUtil->CacheGameDatabaseData());
-	HHMemoryStream kBody(raw.empty() ? NULL : &raw[0], raw.size());
+	HHMemoryStream kBody;
+	kBody.SwapData(raw);   // the stream reads the inflated buffer itself, not a copy of it
 	HH_STEP("Game.Read(stream)", kIf.pGame->Read(kBody));
 	HH_STEP("Map.Read(stream)", kIf.pMap->Read(kBody));
 	for(int i = 0; i < MAX_TEAMS; ++i)
@@ -862,7 +864,7 @@ bool HHLoadSavedGame(const std::string& strPath, HHNewGameInterfaces& kIf, HHNew
 	if(kBody.Overrun() || !kBody.AtEnd())
 	{
 		kResult.error = HHFormat("the DLL read %u of the save's %u body bytes%s; is this DLL the one that wrote it?", kBody.GetPosition(),
-		                         (unsigned)raw.size(), kBody.Overrun() ? " and wanted more" : "");
+		                         (unsigned)kBody.Data().size(), kBody.Overrun() ? " and wanted more" : "");
 		return false;
 	}
 	kResult.timings.push_back(std::make_pair(std::string("load_read_game"), HHSeconds() - t0));

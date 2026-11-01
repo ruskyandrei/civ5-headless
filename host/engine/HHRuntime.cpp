@@ -246,9 +246,11 @@ const char* HHGetPhase()
 	return s_szPhase;
 }
 
-void HHStubHit(const char* szName)
+long* HHStubCounter(const char* szName)
 {
 	Hit(szName, true);
+	HHScoped lock(s_callLock);
+	return &s_calls[szName].count;  // a map's entries stay where they are
 }
 
 long* HHImplCounter(const char* szName)

@@ -1142,10 +1142,44 @@ namespace
 		CloseHandle(h);
 	}
 
+	// --checkpoint-lua, as JSON: one thread and one compiled chunk for the whole game. A new thread per turn is the DLL's library
+	// registration again, about a megabyte of garbage a turn. Globals the file sets stay for its next run.
+	std::string RunCheckpointToJson(HHScriptSystem& kScripts)
+	{
+		static lua_State* s_pThread = NULL;
+		static int s_iChunk = LUA_NOREF;
+		if(!s_pThread)
+		{
+			std::string chunk;
+			if(!HHReadTextFile(HHGetOptions().checkpointLua, chunk))
+			{
+				HHLogError("Headless checkpoint-lua: cannot read %s", HHGetOptions().checkpointLua.c_str());
+				return std::string();
+			}
+			lua_State* L = kScripts.CreateLuaThread("Headless checkpoint-lua");
+			if(!L)
+				return std::string();
+			if(luaL_loadbuffer(L, chunk.c_str(), chunk.size(), "Headless checkpoint-lua") != 0)
+			{
+				HHLogError("Headless checkpoint-lua: %s", lua_tostring(L, -1));
+				kScripts.FreeLuaThread(L);
+				return std::string();
+			}
+			s_iChunk = luaL_ref(L, LUA_REGISTRYINDEX);
+			s_pThread = L;
+		}
+		lua_rawgeti(s_pThread, LUA_REGISTRYINDEX, s_iChunk);
+		std::string json;
+		if(kScripts.CallFunction(s_pThread, 0, 1))
+			json = lua_isnoneornil(s_pThread, -1) ? std::string("null") : HHLuaToJson(s_pThread, -1, 0);
+		lua_settop(s_pThread, 0);
+		return json;
+	}
+
 	// M6 tooling: checkpoints\turn-NNNN[-final].json from --checkpoint-lua, wrapped as vpbench writes them.
 	void WriteCheckpoint(HHScriptSystem& kScripts, int iTurn, const char* szSuffix, double dSeconds)
 	{
-		const std::string json = RunFileToJson(kScripts, HHGetOptions().checkpointLua, "Headless checkpoint-lua");
+		const std::string json = RunCheckpointToJson(kScripts);
 		if(json.empty())
 			return;
 		HHWriteTextFile(HHGetPaths().run + HHFormat("checkpoints\\turn-%04d%s.json", iTurn, szSuffix),

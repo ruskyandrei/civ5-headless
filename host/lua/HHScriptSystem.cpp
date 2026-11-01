@@ -192,9 +192,8 @@ unsigned int HHScriptArgs::Push(bool bValue)
 unsigned int HHScriptArgs::Push(const char* szValue, size_t lenValue)
 {
 	HH_IMPL_CALL("ICvEngineScriptSystemArgs1::Push");
-	Arg a; a.eType = ARGTYPE_STRING;
-	if(szValue)
-		a.s.assign(szValue, lenValue);
+	Arg a; a.eType = ARGTYPE_STRING; a.iString = (unsigned int)m_strings.size();
+	m_strings.push_back(szValue ? std::string(szValue, lenValue) : std::string());
 	return Add(a);
 }
 
@@ -215,7 +214,7 @@ unsigned int HHScriptArgs::Push(float fValue)
 unsigned int HHScriptArgs::PushNULL()
 {
 	HH_IMPL_CALL("ICvEngineScriptSystemArgs1::PushNULL");
-	Arg a; a.eType = ARGTYPE_NULL;
+	Arg a; a.eType = ARGTYPE_NULL; a.i = 0;
 	return Add(a);
 }
 
@@ -265,10 +264,10 @@ bool HHScriptArgs::GetInt(unsigned int argIndex, int& iValue)
 bool HHScriptArgs::GetString(unsigned int argIndex, char*& szValue)
 {
 	HH_IMPL_CALL("ICvEngineScriptSystemArgs1::GetString");
-	Arg* a = const_cast<Arg*>(At(argIndex));
+	const Arg* a = At(argIndex);
 	if(!a || a->eType != ARGTYPE_STRING)
 		return false;
-	szValue = const_cast<char*>(a->s.c_str());
+	szValue = const_cast<char*>(m_strings[a->iString].c_str());
 	return true;
 }
 
@@ -280,13 +279,19 @@ int HHScriptArgs::PushAll(lua_State* L) const
 		switch(a.eType)
 		{
 		case ARGTYPE_BOOL: lua_pushboolean(L, a.b ? 1 : 0); break;
-		case ARGTYPE_STRING: lua_pushlstring(L, a.s.c_str(), a.s.size()); break;
+		case ARGTYPE_STRING: lua_pushlstring(L, m_strings[a.iString].c_str(), m_strings[a.iString].size()); break;
 		case ARGTYPE_INT: lua_pushinteger(L, a.i); break;
 		case ARGTYPE_FLOAT: lua_pushnumber(L, a.f); break;
 		default: lua_pushnil(L); break;
 		}
 	}
 	return (int)m_args.size();
+}
+
+void HHScriptArgs::Clear()
+{
+	m_args.clear();
+	m_strings.clear();
 }
 
 //------------------------------------------------------------------------------
@@ -331,7 +336,7 @@ void HHScriptSystem::HideDebugLibrary()
 	HHLog("Lua: debug library removed from _G (the boot-time VP_LUAAPI thread is done)");
 }
 
-HHScriptSystem::HHScriptSystem() : m_L(NULL), m_iErrors(0), m_iErrorTotal(0), m_bCountErrors(true), m_pUtility(NULL)
+HHScriptSystem::HHScriptSystem() : m_L(NULL), m_iErrors(0), m_iErrorTotal(0), m_bCountErrors(true), m_pUtility(NULL), m_bListenedEventsStale(true)
 {
 	m_L = luaL_newstate();
 	luaL_openlibs(m_L);
@@ -422,6 +427,8 @@ void HHScriptSystem::RecordError(const std::string& strContext, const char* szMe
 HHScriptSystem::~HHScriptSystem()
 {
 	Shutdown();
+	for(size_t i = 0; i < m_freeArgs.size(); ++i)
+		delete m_freeArgs[i];
 }
 
 void HHScriptSystem::Shutdown()
@@ -477,6 +484,21 @@ lua_State* HHScriptSystem::CreateLuaThread(const char* szName)
 	{
 		HHLogError("CreateLuaThread(%s): RegisterScriptLibraries failed: %s", szName, lua_tostring(T, -1));
 		lua_pop(T, 1);
+	}
+	// The DLL builds GameInfoActions and GameInfoTypes again for every thread: 840 KB of the same tables for each of about 30 UI
+	// contexts, and Lua's collector lets the heap grow to twice what is live. Once HHLuaRegisterGameData has built them on the main
+	// state, every thread reads those. Nothing in the game's or VP's Lua writes to them.
+	static const char* const kSharedTables[] = { "GameInfoActions", "GameInfoTypes" };
+	for(int i = 0; i < 2; ++i)
+	{
+		lua_getglobal(m_L, kSharedTables[i]);
+		if(lua_istable(m_L, -1))
+		{
+			lua_xmove(m_L, T, 1);
+			lua_setglobal(T, kSharedTables[i]);
+		}
+		else
+			lua_pop(m_L, 1);
 	}
 	return T;
 }
@@ -697,22 +719,31 @@ bool HHScriptSystem::RunString(lua_State* L, const char* szChunk, const char* sz
 	return ProtectedCall(L, 0, 0, szChunkName);
 }
 
+// The DLL makes an args object for every hook it raises, millions in a long game, whether anything listens or not.
+// So they are used again.
 ICvEngineScriptSystemArgs1* HHScriptSystem::CreateArgs()
 {
 	HH_IMPL_CALL("ICvEngineScriptSystem1::CreateArgs");
-	return new HHScriptArgs();
+	if(m_freeArgs.empty())
+		return new HHScriptArgs();
+	HHScriptArgs* pArgs = m_freeArgs.back();
+	m_freeArgs.pop_back();
+	return pArgs;
 }
 
 ICvEngineScriptSystemArgs1* HHScriptSystem::CreateArgs(uint)
 {
-	HH_IMPL_CALL("ICvEngineScriptSystem1::CreateArgs");
-	return new HHScriptArgs();
+	return CreateArgs();
 }
 
 void HHScriptSystem::DestroyArgs(ICvEngineScriptSystemArgs1* pkArgs)
 {
 	HH_IMPL_CALL("ICvEngineScriptSystem1::DestroyArgs");
-	delete pkArgs;
+	if(!pkArgs)
+		return;
+	HHScriptArgs* pArgs = static_cast<HHScriptArgs*>(pkArgs);
+	pArgs->Clear();
+	m_freeArgs.push_back(pArgs);
 }
 
 bool HHScriptSystem::CallCFunction(lua_State* L, lua_CFunction func, void* args)
@@ -736,27 +767,44 @@ bool HHScriptSystem::CallFunction(lua_State* L, unsigned int nArgs, unsigned int
 	return ProtectedCall(L, (int)nArgs, (int)nRet, "CallFunction");
 }
 
+// Whether a GameEvent has a listener, without asking Lua: the DLL raises millions of them in a long game and nearly all
+// have none. The names come from __HHGameEventListeners, read again after every change (GameEventListenersChanged).
+bool HHScriptSystem::HasGameEventListeners(const char* szName)
+{
+	if(m_bListenedEventsStale)
+	{
+		m_bListenedEventsStale = false;
+		m_listenedEvents.clear();
+		const int top = lua_gettop(m_L);
+		lua_getglobal(m_L, "__HHGameEventListeners");
+		if(lua_istable(m_L, -1))
+		{
+			lua_pushnil(m_L);
+			while(lua_next(m_L, -2))
+			{
+				if(lua_type(m_L, -2) == LUA_TSTRING && lua_istable(m_L, -1) && lua_objlen(m_L, -1) > 0)
+					m_listenedEvents.push_back(lua_tostring(m_L, -2));
+				lua_pop(m_L, 1);
+			}
+		}
+		lua_settop(m_L, top);
+	}
+	for(size_t i = 0; i < m_listenedEvents.size(); ++i)
+		if(strcmp(m_listenedEvents[i].c_str(), szName) == 0)
+			return true;
+	return false;
+}
+
 // GameEvents (contract 10.1): the listeners live in the Lua prelude's __HHGameEventListeners; the
 // dispatch (__HHGameEventDispatch) runs every listener in registration order with the hook's
-// arguments. Returns handled; dValue is the in/out value. A name without listeners costs two table
-// lookups and returns not handled with the value unchanged.
+// arguments. Returns handled; dValue is the in/out value. A name without listeners returns not
+// handled with the value unchanged.
 bool HHScriptSystem::DispatchGameEvent(const char* szName, ICvEngineScriptSystemArgs1* pArgs, const char* szMode, double& dValue)
 {
 	lua_State* L = m_L;
-	if(!L || !szName)
+	if(!L || !szName || !HasGameEventListeners(szName))
 		return false;
 	const int top = lua_gettop(L);
-	lua_getglobal(L, "__HHGameEventListeners");
-	if(!lua_istable(L, -1))
-	{
-		lua_settop(L, top);
-		return false;
-	}
-	lua_getfield(L, -1, szName);
-	const bool bListeners = lua_istable(L, -1) && lua_objlen(L, -1) > 0;
-	lua_settop(L, top);
-	if(!bListeners)
-		return false;
 	// A thread of its own: the DLL can raise a hook while Lua code runs on the main state.
 	lua_State* T = lua_newthread(L);
 	lua_getglobal(T, "__HHGameEventDispatch");

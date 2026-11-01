@@ -533,6 +533,20 @@ namespace
 		return true;
 	}
 
+	// The FireWorks code in the game DLL calls SymInitialize and SymLoadModuleEx while the DLL loads. With the DLL's .pdb next to it
+	// or at the path the DLL names, dbghelp then reads the symbols at once: 65 MB of the process for the whole game, which nothing
+	// ever asks for. With deferred loads it reads them only if something asks. The option has to be set before the DLL loads.
+	void DeferGameDllSymbols()
+	{
+		typedef DWORD (WINAPI *PFNSymGetOptions)();
+		typedef DWORD (WINAPI *PFNSymSetOptions)(DWORD);
+		const HMODULE h = LoadLibraryW(L"dbghelp.dll");
+		PFNSymGetOptions pfnGet = h ? (PFNSymGetOptions)GetProcAddress(h, "SymGetOptions") : NULL;
+		PFNSymSetOptions pfnSet = h ? (PFNSymSetOptions)GetProcAddress(h, "SymSetOptions") : NULL;
+		if(pfnGet && pfnSet)
+			pfnSet(pfnGet() | 0x00000004 /* SYMOPT_DEFERRED_LOADS */);
+	}
+
 	HMODULE LoadFiraxisDll(const std::string& strGameDir, const char* szName)
 	{
 		const std::string path = strGameDir + "\\" + szName;
@@ -542,6 +556,44 @@ namespace
 		else
 			HHLog("loaded %s", path.c_str());
 		return h;
+	}
+
+	// The DLL yields to a UI thread with a Sleep(1) inside its tactical search, thousands of times a game. The host has no
+	// UI thread, and a game is the same without the wait. Longer sleeps stay: they are the DLL's own rate limits.
+	void WINAPI YieldlessSleep(DWORD dwMilliseconds)
+	{
+		if(dwMilliseconds > 1)
+			Sleep(dwMilliseconds);
+	}
+
+	// The game DLL's import of Sleep goes to YieldlessSleep. By the import table, so any built DLL works.
+	void RemoveUiYield(HMODULE hDll)
+	{
+		BYTE* pBase = (BYTE*)hDll;
+		const IMAGE_NT_HEADERS* pNt = (const IMAGE_NT_HEADERS*)(pBase + ((const IMAGE_DOS_HEADER*)pBase)->e_lfanew);
+		const IMAGE_DATA_DIRECTORY& dir = pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+		if(!dir.VirtualAddress)
+			return;
+		for(const IMAGE_IMPORT_DESCRIPTOR* pImp = (const IMAGE_IMPORT_DESCRIPTOR*)(pBase + dir.VirtualAddress); pImp->Name; ++pImp)
+		{
+			if(_stricmp((const char*)(pBase + pImp->Name), "KERNEL32.dll") != 0 || !pImp->OriginalFirstThunk)
+				continue;
+			const IMAGE_THUNK_DATA* pName = (const IMAGE_THUNK_DATA*)(pBase + pImp->OriginalFirstThunk);
+			IMAGE_THUNK_DATA* pAddr = (IMAGE_THUNK_DATA*)(pBase + pImp->FirstThunk);
+			for(; pName->u1.AddressOfData; ++pName, ++pAddr)
+			{
+				if(IMAGE_SNAP_BY_ORDINAL(pName->u1.Ordinal) || strcmp((const char*)((const IMAGE_IMPORT_BY_NAME*)(pBase + pName->u1.AddressOfData))->Name, "Sleep") != 0)
+					continue;
+				DWORD dwOld = 0;
+				if(VirtualProtect(&pAddr->u1.Function, sizeof(pAddr->u1.Function), PAGE_READWRITE, &dwOld))
+				{
+					pAddr->u1.Function = (DWORD_PTR)&YieldlessSleep;
+					VirtualProtect(&pAddr->u1.Function, sizeof(pAddr->u1.Function), dwOld, &dwOld);
+					HHLog("game DLL: no Sleep(1) yields");
+				}
+				return;
+			}
+		}
 	}
 
 	std::string ModulePath(HMODULE h)
@@ -1230,6 +1282,7 @@ namespace
 			void* pExtra = VirtualAlloc(NULL, (SIZE_T)(1 + o.heapPerturb % 61) * 1024 * 1024, MEM_RESERVE, PAGE_NOACCESS);
 			HHLog("heap-perturb %u: game DLL normal base %p (reserved: %s), extra reservation %p", o.heapPerturb, pBase, pBlock ? "yes" : "no", pExtra);
 		}
+		DeferGameDllSymbols();
 		HMODULE hGame = LoadLibraryExW(HHWiden(o.dllPath).c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 		if(o.heapPerturb)
 			HHLog("heap-perturb: game DLL loaded at %p", (void*)hGame);
@@ -1241,6 +1294,7 @@ namespace
 			return 2;
 		}
 		HHLog("loaded %s", ModulePath(hGame).c_str());
+		RemoveUiYield(hGame);
 		s.crtModule = ModulePath(GetModuleHandleW(L"msvcr90.dll"));
 		HHLog("CRT: %s", s.crtModule.c_str());
 		typedef ICvGameContext1* (*PFNGetContext)();
@@ -1485,6 +1539,9 @@ namespace
 				HHRunLuaProbes(nif, ng);
 				if(o.turns > 0)
 				{
+					// SQLite gives back the page cache of startup; what play reads comes back from the run's copies.
+					dbs.GetGame()->Execute("PRAGMA shrink_memory");
+					dbs.GetLocalization()->Execute("PRAGMA shrink_memory");
 					HHSetPhase("autoplay");
 					HHRunAutoplay(nif, ng, o.turns, o.idleUpdates);
 				}

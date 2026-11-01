@@ -45,6 +45,7 @@ public:
 	virtual void RaiseException(std::exception& kException) const;
 
 	const std::vector<char>& Data() const { return m_data; }
+	void SwapData(std::vector<char>& data) { m_data.swap(data); }
 	bool Overrun() const { return m_bOverrun; }
 
 private:
